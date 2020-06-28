@@ -68,11 +68,11 @@ python main.py -h
 ```bash
 tensorboard --logdir=/path/to/checkoints
 ```
-	
+
 ## Training results
 
  Models can be downloaded [here](https://drive.google.com/open?id=0B5EC7HMbyk3CbjFPb0RuODI3NmM) in the pytorch folder.
- 
+
  Models were trained with default options unless specified. Color warping was not used.
 
 | Arch        | learning rate | batch size | epoch size | filename                     | validation EPE |

@@ -1,0 +1,9 @@
+*.gz*
+*.tar*
+dataset/*.zip
+dataset/kitti_scene_flow
+dataset/kitti_stereo_flow
+*/_pycache__
+*.pyc
+*tfevents*
+*.zip

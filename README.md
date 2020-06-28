@@ -6,3 +6,7 @@ You can download the dataset for training the FlowNetS network with the script `
 
 ## Training
 
+To train on KITTI dataset, one can use `KITTI_occ` or `KITTI_noc` as parameter to `--dataset` in `code/main.py`. One possible full command is:
+```
+python main.py --dataset KITTI_occ ../dataset/kitti_scene_flow/training/ -b8 -j8 -a flownets
+```

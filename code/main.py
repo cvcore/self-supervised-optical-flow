@@ -13,9 +13,10 @@ import flow_transforms
 import models
 import datasets
 from multiscaleloss import multiscaleEPE, realEPE
+from own_loss import photometric_loss, smoothness_loss
 import datetime
 from tensorboardX import SummaryWriter
-from util import flow2rgb, AverageMeter, save_checkpoint
+from util import flow2rgb, AverageMeter, save_checkpoint, save_image
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__"))
@@ -110,13 +111,13 @@ def main():
 
     # Data loading code
     input_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor(),
-        transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
-        transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
+        flow_transforms.ArrayToTensor()
+        #transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
+        #transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
     ])
     target_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor(),
-        transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
+        flow_transforms.ArrayToTensor()
+        #transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
     ])
 
     if 'KITTI' in args.dataset:
@@ -225,46 +226,82 @@ def train(train_loader, model, optimizer, epoch, train_writer):
 
     end = time.time()
 
-    for i, (input, target) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
-        target = target.to(device)
-        input = torch.cat(input,1).to(device)
+    if False:
+        # use old loss
+        for i, (input, target) in enumerate(train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            target = target.to(device)
+            input = torch.cat(input,1).to(device)
 
-        # compute output
-        output = model(input)
-        if args.sparse:
-            # Since Target pooling is not very precise when sparse,
-            # take the highest resolution prediction and upsample it instead of downsampling target
-            h, w = target.size()[-2:]
-            output = [F.interpolate(output[0], (h,w)), *output[1:]]
+            # compute output
+            output = model(input)
+            if args.sparse:
+                # Since Target pooling is not very precise when sparse,
+                # take the highest resolution prediction and upsample it instead of downsampling target
+                h, w = target.size()[-2:]
+                output = [F.interpolate(output[0], (h,w)), *output[1:]]
 
-        loss = multiscaleEPE(output, target, weights=args.multiscale_weights, sparse=args.sparse)
-        flow2_EPE = args.div_flow * realEPE(output[0], target, sparse=args.sparse)
-        # record loss and EPE
-        losses.update(loss.item(), target.size(0))
-        train_writer.add_scalar('train_loss', loss.item(), n_iter)
-        flow2_EPEs.update(flow2_EPE.item(), target.size(0))
+            loss = multiscaleEPE(output, target, weights=args.multiscale_weights, sparse=args.sparse)
+            flow2_EPE = args.div_flow * realEPE(output[0], target, sparse=args.sparse)
+            # record loss and EPE
+            losses.update(loss.item(), target.size(0))
+            train_writer.add_scalar('train_loss', loss.item(), n_iter)
+            flow2_EPEs.update(flow2_EPE.item(), target.size(0))
 
-        # compute gradient and do optimization step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # compute gradient and do optimization step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-        if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
-                  .format(epoch, i, epoch_size, batch_time,
-                          data_time, losses, flow2_EPEs))
-        n_iter += 1
-        if i >= epoch_size:
-            break
+            if i % args.print_freq == 0:
+                print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
+                      .format(epoch, i, epoch_size, batch_time,
+                              data_time, losses, flow2_EPEs))
+            n_iter += 1
+            if i >= epoch_size:
+                break
 
-    return losses.avg, flow2_EPEs.avg
+        return losses.avg, flow2_EPEs.avg
+    else:
+        # use photometric loss
+        for i, (input, target) in enumerate(train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            target = target.to(device)
+            im1 = input[0].to(device)
+            im2 = input[1].to(device)
+            input = torch.cat(input,1).to(device)
+            flow = model(input)[0]
 
+            loss = photometric_loss(im1, im2, flow) + smoothness_loss(flow)
+
+            # record loss and EPE
+            losses.update(loss.item(), target.size(0))
+            train_writer.add_scalar('train_loss', loss.item(), n_iter)
+
+            # compute gradient and do optimization step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            if i % args.print_freq == 0:
+                print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
+                      .format(epoch, i, epoch_size, batch_time,
+                              data_time, losses, flow2_EPEs))
+            n_iter += 1
+            if i >= epoch_size:
+                break
+
+        return losses.avg, flow2_EPEs.avg
 
 def validate(val_loader, model, epoch, output_writers):
     global args

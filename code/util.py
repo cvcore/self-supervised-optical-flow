@@ -2,7 +2,7 @@ import os
 import numpy as np
 import shutil
 import torch
-
+from imageio import imwrite
 
 def save_checkpoint(state, is_best, save_path, filename='checkpoint.pth.tar'):
     torch.save(state, os.path.join(save_path,filename))
@@ -32,7 +32,7 @@ class AverageMeter(object):
         return '{:.3f} ({:.3f})'.format(self.val, self.avg)
 
 
-def flow2rgb(flow_map, max_value):
+def flow2rgb(flow_map, max_value=None):
     flow_map_np = flow_map.detach().cpu().numpy()
     _, h, w = flow_map_np.shape
     flow_map_np[:,(flow_map_np[0] == 0) & (flow_map_np[1] == 0)] = float('nan')
@@ -45,3 +45,22 @@ def flow2rgb(flow_map, max_value):
     rgb_map[1] -= 0.5*(normalized_flow_map[0] + normalized_flow_map[1])
     rgb_map[2] += normalized_flow_map[1]
     return rgb_map.clip(0,1)
+
+
+def save_image(image, file_name='default.png'):
+    # convert from tensor to numpy array
+    if torch.is_tensor(image):
+        image = image.squeeze().cpu().data.numpy()
+
+    # swap axes
+    if image.shape[0] <= 3:
+        image = np.moveaxis(image, 0, -1)
+
+    # rough channelwise normalization
+    for i in range(3):
+        min_val = np.amin(image[:,:,i])
+        image[:,:,i] = image[:,:,i] - min_val
+        max_val = np.amax(image[:,:,i])
+        image[:,:,i] = image[:,:,i] / max_val
+
+    imwrite(file_name, image)

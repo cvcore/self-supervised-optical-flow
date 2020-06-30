@@ -3,7 +3,8 @@
 dataset/*.zip
 dataset/kitti_scene_flow
 dataset/kitti_stereo_flow
-*/_pycache__
+*_pycache__
 *.pyc
 *tfevents*
 *.zip
+.idea/

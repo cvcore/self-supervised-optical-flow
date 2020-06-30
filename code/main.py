@@ -79,6 +79,7 @@ parser.add_argument('--no-date', action='store_true',
 parser.add_argument('--div-flow', default=20,
                     help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
+parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
 
 best_EPE = -1
 n_iter = 0
@@ -226,7 +227,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
 
     end = time.time()
 
-    if False:
+    if not args.self_supervised_loss:
         # use old loss
         for i, (input, target) in enumerate(train_loader):
             # measure data loading time

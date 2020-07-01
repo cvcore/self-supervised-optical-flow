@@ -5,7 +5,7 @@ function download_link {
     link=$2
     if [[ ! -f $file ]]; then
         echo "Downloading $file from $link"
-        wget -O "$file" "$link"
+        wget --no-check-certificate -O "$file" "$link"
     else
         echo "$file exists!"
     fi

@@ -112,13 +112,13 @@ def main():
 
     # Data loading code
     input_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor()
-        #transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
-        #transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
+        flow_transforms.ArrayToTensor(),
+        transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
+        transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
     ])
     target_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor()
-        #transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
+        flow_transforms.ArrayToTensor(),
+        transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
     ])
 
     if 'KITTI' in args.dataset:
@@ -279,7 +279,15 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             input = torch.cat(input,1).to(device)
             flow = model(input)[0]
 
-            loss = photometric_loss(im1, im2, flow) + smoothness_loss(flow)
+            loss1 = photometric_loss(im1, im2, flow)
+            loss2 = smoothness_loss(flow)
+
+            # to check the magnitude of both losses
+            # print('---')
+            # print(loss1)
+            # print(loss2)
+
+            loss = loss1+loss2
 
             # record loss and EPE
             losses.update(loss.item(), target.size(0))

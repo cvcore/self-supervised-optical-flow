@@ -48,7 +48,7 @@ def photometric_loss(im1, im2, flow):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return charbonnier_loss(output-im1, 0.53, 360)
+    return charbonnier_loss(output-im1, 2, 1)
 
 
 def smoothness_loss(flow):
@@ -56,8 +56,8 @@ def smoothness_loss(flow):
     diff_x = flow[:, :, :-1, :] - flow[:, :, 1:, :]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return 0.64*charbonnier_loss(diff_x, 0.28, 3.5) + \
-           0.64*charbonnier_loss(diff_y, 0.28, 3.5)
+    return 100*charbonnier_loss(diff_x, 2, 1) + \
+           100*charbonnier_loss(diff_y, 2, 1)
 
 
 

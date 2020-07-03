@@ -283,9 +283,9 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             loss2 = smoothness_loss(flow)
 
             # to check the magnitude of both losses
-            print('---')
-            print(loss1)
-            print(loss2)
+            # print('---')
+            # print(loss1)
+            # print(loss2)
 
             loss = loss1+loss2
 

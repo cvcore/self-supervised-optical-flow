@@ -15,14 +15,19 @@ def charbonnier_loss(input, alpha, beta):
     return torch.sum(torch.pow(sq, alpha))
 
 
-def photometric_loss(im1, im2, flow):
+def photometric_loss(im1, im2, flow, negative_flow = False):
     # upscaling in case the height does not match. Assumes image ratio is correct
     if im1.shape[2] != flow.shape[2]:
         m = Upsample(scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear').to(device)
         flow = m(flow)
 
     # copied from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
-    x = im2
+
+    if negative_flow:
+        x = im1
+    else:
+        x = im2
+
     B, C, H, W = x.size()
 
     # mesh grid
@@ -31,20 +36,28 @@ def photometric_loss(im1, im2, flow):
     xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
     yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
     grid = torch.cat((xx, yy), 1).float().to(device)
-    vgrid = grid + flow
+
+    if negative_flow:
+        vgrid = grid - flow
+    else:
+        vgrid = grid + flow
 
     # scale grid to [-1,1]
     vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
     vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
 
     vgrid = vgrid.permute(0, 2, 3, 1)
-    output = F.grid_sample(im2, vgrid)
+
+    if negative_flow:
+        output = F.grid_sample(im1, vgrid)
+    else:
+        output = F.grid_sample(im2, vgrid)
 
     # for debug purpose
     # save_image(im1[0], 'im1.png')
     # save_image(im2[0], 'im2.png')
     # save_image((output)[0], 'diff.png')
-    # print(torch.sum(torch.abs(im1 - output)))
+    # return
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet

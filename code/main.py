@@ -13,7 +13,7 @@ import flow_transforms
 import models
 import datasets
 from multiscaleloss import multiscaleEPE, realEPE
-from own_loss import photometric_loss, smoothness_loss
+from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss
 import datetime
 from tensorboardX import SummaryWriter
 from util import flow2rgb, AverageMeter, save_checkpoint, save_image
@@ -92,6 +92,7 @@ def get_default_config():
     cfg["sl_exp"] = 2
     cfg["pl_exp"] = 2
     cfg["negative_flow"] = False
+    cfg["weighted_sl_loss"] = False
     cfg["epochs"] = 1000
     return cfg
 
@@ -292,15 +293,19 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             input = torch.cat(input,1).to(device)
             flow = model(input)[0]
 
-            pl_loss = photometric_loss(im1, im2, flow, config)
-            sl_loss = smoothness_loss(flow, config)
+            pl_loss = photometric_loss(im1, im2, target, config)
+
+            if config['weighted_sl_loss']:
+                sl_loss = weighted_smoothness_loss(im1, im2, flow, config)
+            else:
+                sl_loss = smoothness_loss(flow, config)
 
             # to check the magnitude of both losses
             # print('---')
             # print(pl_loss)
             # print(sl_loss)
 
-            loss = pl_loss+sl_loss
+            loss = pl_loss + sl_loss
 
             # record loss and EPE
             losses.update(loss.item(), target.size(0))

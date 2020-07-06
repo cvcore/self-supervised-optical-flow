@@ -31,10 +31,11 @@ def get_bohb_parameters():
 
 def get_configspace():
     cs = CS.ConfigurationSpace()
-    cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='sl_weight', lower=1, upper=1000000, log=True, default_value=100))
+    cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='sl_weight', lower=1, upper=100000, log=True, default_value=100))
     cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='sl_exp', lower=0.5, upper=2, log=True, default_value=1))
     cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='pl_exp', lower=0.5, upper=2, log=True, default_value=1))
     cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='negative_flow', choices=[False, True], default_value=False))
+    cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='weighted_sl_loss', choices=[False, True], default_value=False))
 
     return cs
 
@@ -197,7 +198,6 @@ def run_bohb_parallel(id, run_id, bohb_workers):
 
     res = bohb.run(n_iterations=bohb_params['iterations'],
                    min_n_workers=int(bohb_workers))
-#    res = bohb.run(n_iterations=BOHB_ITERATIONS)
 
     bohb.shutdown(shutdown_workers=True)
     ns.shutdown()

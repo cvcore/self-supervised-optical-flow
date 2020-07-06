@@ -46,8 +46,8 @@ parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers')
 parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
+# parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+#                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--epoch-size', default=1000, type=int, metavar='N',
                     help='manual epoch size (will match dataset size if set to 0)')
 parser.add_argument('-b', '--batch-size', default=8, type=int,
@@ -86,7 +86,17 @@ n_iter = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def main():
+def get_default_config():
+    cfg = {}
+    cfg["sl_weight"] = 100
+    cfg["sl_exp"] = 2
+    cfg["pl_exp"] = 2
+    cfg["negative_flow"] = False
+    cfg["epochs"] = 1000
+    return cfg
+
+
+def main(config=get_default_config()):
     global args, best_EPE
     args = parser.parse_args()
     save_path = '{},{},{}epochs{},b{},lr{}'.format(
@@ -186,11 +196,12 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=0.5)
 
-    for epoch in range(args.start_epoch, args.epochs):
+    #for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(int(config["epochs"])):
         scheduler.step()
 
         # train for one epoch
-        train_loss, train_EPE = train(train_loader, model, optimizer, epoch, train_writer)
+        train_loss, train_EPE = train(train_loader, model, optimizer, epoch, train_writer, config)
         train_writer.add_scalar('mean EPE', train_EPE, epoch)
 
         # evaluate on validation set
@@ -212,8 +223,10 @@ def main():
             'div_flow': args.div_flow
         }, is_best, save_path)
 
+    return best_EPE
 
-def train(train_loader, model, optimizer, epoch, train_writer):
+
+def train(train_loader, model, optimizer, epoch, train_writer, config):
     global n_iter, args
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -279,19 +292,21 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             input = torch.cat(input,1).to(device)
             flow = model(input)[0]
 
-            loss1 = photometric_loss(im1, im2, flow, negative_flow=False)
-            loss2 = smoothness_loss(flow)
+            pl_loss = photometric_loss(im1, im2, flow, config)
+            sl_loss = smoothness_loss(flow, config)
 
             # to check the magnitude of both losses
             # print('---')
-            # print(loss1)
-            # print(loss2)
+            # print(pl_loss)
+            # print(sl_loss)
 
-            loss = loss1+loss2
+            loss = pl_loss+sl_loss
 
             # record loss and EPE
             losses.update(loss.item(), target.size(0))
+            flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)
+            flow2_EPEs.update(flow2_EPE.item(), target.size(0))
 
             # compute gradient and do optimization step
             optimizer.zero_grad()

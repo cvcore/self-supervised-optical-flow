@@ -15,7 +15,10 @@ def charbonnier_loss(input, alpha, beta):
     return torch.sum(torch.pow(sq, alpha))
 
 
-def photometric_loss(im1, im2, flow, negative_flow = False):
+def photometric_loss(im1, im2, flow, config):
+    negative_flow = config['negative_flow']
+    pl_exp = config['pl_exp']
+
     # upscaling in case the height does not match. Assumes image ratio is correct
     if im1.shape[2] != flow.shape[2]:
         m = Upsample(scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear').to(device)
@@ -61,16 +64,19 @@ def photometric_loss(im1, im2, flow, negative_flow = False):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return charbonnier_loss(output-im1, 2, 1)
+    return charbonnier_loss(output-im1, pl_exp, 1)
 
 
-def smoothness_loss(flow):
+def smoothness_loss(flow, config):
+    sl_weight = config['sl_weight']
+    sl_exp = config['sl_exp']
+
     diff_y = flow[:, :, :, :-1] - flow[:, :, :, 1:]
     diff_x = flow[:, :, :-1, :] - flow[:, :, 1:, :]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return 100*charbonnier_loss(diff_x, 2, 1) + \
-           100*charbonnier_loss(diff_y, 2, 1)
+    return sl_weight*charbonnier_loss(diff_x, sl_exp, 1) + \
+           sl_weight*charbonnier_loss(diff_y, sl_exp, 1)
 
 
 

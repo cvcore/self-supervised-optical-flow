@@ -199,10 +199,10 @@ def main(config=get_default_config()):
 
     #for epoch in range(args.start_epoch, args.epochs):
     for epoch in range(int(config["epochs"])):
-        scheduler.step()
 
         # train for one epoch
         train_loss, train_EPE = train(train_loader, model, optimizer, epoch, train_writer, config)
+        scheduler.step()
         train_writer.add_scalar('mean EPE', train_EPE, epoch)
 
         # evaluate on validation set
@@ -283,7 +283,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
 
         return losses.avg, flow2_EPEs.avg
     else:
-        # use photometric loss
+        # use self-supervised loss
         for i, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -291,14 +291,20 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             im1 = input[0].to(device)
             im2 = input[1].to(device)
             input = torch.cat(input,1).to(device)
-            flow = model(input)[0]
+            pred = model(input)
 
-            pl_loss = photometric_loss(im1, im2, target, config)
+            flow = pred[0]
+
+            pl_loss = photometric_loss(im1, im2, flow, config)
 
             if config['weighted_sl_loss']:
                 sl_loss = weighted_smoothness_loss(im1, im2, flow, config)
             else:
                 sl_loss = smoothness_loss(flow, config)
+
+            # smoothness loss for multi resolution flow pyramid
+            for flow_intermediate in pred[1:]:
+                sl_loss += smoothness_loss(flow_intermediate, config)
 
             # to check the magnitude of both losses
             # print('---')

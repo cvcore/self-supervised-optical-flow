@@ -16,6 +16,8 @@ def charbonnier_loss(input, alpha, beta):
 
 
 def photometric_loss(im1, im2, flow, config):
+    """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
+    """
     negative_flow = config['negative_flow']
     pl_exp = config['pl_exp']
 
@@ -25,11 +27,13 @@ def photometric_loss(im1, im2, flow, config):
 
     # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
     if negative_flow:
-        x = im1
+        image = im1
+        image_target = im2
     else:
-        x = im2
+        image = im2
+        image_target = im1
 
-    B, C, H, W = x.size()
+    B, C, H, W = image.size()
 
     # mesh grid
     xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
@@ -49,23 +53,17 @@ def photometric_loss(im1, im2, flow, config):
 
     vgrid = vgrid.permute(0, 2, 3, 1)
 
-    if negative_flow:
-        output = F.grid_sample(im1, vgrid)
-    else:
-        output = F.grid_sample(im2, vgrid)
+    warped_image = F.grid_sample(image, vgrid)
 
     # for debug purpose
     # save_image(im1[0], 'im1.png')
     # save_image(im2[0], 'im2.png')
-    # save_image((output)[0], 'diff.png')
+    # save_image((warped_image)[0], 'diff.png')
     # return
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    if negative_flow:
-        return charbonnier_loss(output - im2, pl_exp, 1)
-    else:
-        return charbonnier_loss(output - im1, pl_exp, 1)
+    return charbonnier_loss(warped_image - image_target, pl_exp, 1)
 
 
 def smoothness_loss(flow, config):

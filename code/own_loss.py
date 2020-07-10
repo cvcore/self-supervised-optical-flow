@@ -1,10 +1,5 @@
 import torch
 import torch.nn.functional as F
-from torch.nn.modules.upsampling import Upsample
-from util import save_image, flow2rgb
-import time
-import numpy as np
-from imageio import imwrite
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -54,6 +49,10 @@ def photometric_loss(im1, im2, flow, config):
     vgrid = vgrid.permute(0, 2, 3, 1)
 
     warped_image = F.grid_sample(image, vgrid)
+    mask = torch.autograd.Variable(torch.ones(image.size())).cuda()
+    mask = F.grid_sample(mask, vgrid)
+    mask[mask < 0.999] = 0
+    mask[mask > 0] = 1
 
     # for debug purpose
     # save_image(im1[0], 'im1.png')
@@ -63,7 +62,7 @@ def photometric_loss(im1, im2, flow, config):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return charbonnier_loss(warped_image - image_target, pl_exp, 1)
+    return charbonnier_loss((warped_image - image_target)*mask, pl_exp, 1)
 
 
 def smoothness_loss(flow, config):
@@ -99,11 +98,11 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     diff_flow_x = abs(flow[:, :, :-1, :] - flow[:, :, 1:, :])
     diff_flow_y = abs(flow[:, :, :, :-1] - flow[:, :, :, 1:])
 
-    diff_img_x = image[:, :, :-1, :] - image[:, :, 1:, :]
-    diff_img_y = image[:, :, :, :-1] - image[:, :, :, 1:]
+    diff_img_x = abs(image[:, :, :-1, :] - image[:, :, 1:, :])
+    diff_img_y = abs(image[:, :, :, :-1] - image[:, :, :, 1:])
 
-    exp_x = torch.exp(-torch.sum(abs(diff_img_x), dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
-    exp_y = torch.exp(-torch.sum(abs(diff_img_y), dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
+    exp_x = torch.exp(-torch.sum(diff_img_x), dim=1).unsqueeze(1).expand(-1,2,-1,-1)
+    exp_y = torch.exp(-torch.sum(diff_img_y), dim=1).unsqueeze(1).expand(-1,2,-1,-1)
 
     return sl_weight*torch.sum(diff_flow_x * exp_x) + \
            sl_weight*torch.sum(diff_flow_y * exp_y)

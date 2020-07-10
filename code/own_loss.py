@@ -69,12 +69,12 @@ def smoothness_loss(flow, config):
     sl_weight = config['sl_weight']
     sl_exp = config['sl_exp']
 
-    diff_x = flow[:, :, :-1, :] - flow[:, :, 1:, :]
-    diff_y = flow[:, :, :, :-1] - flow[:, :, :, 1:]
+    diff_y = flow[:, :, 1:, :] - flow[:, :, :-1, :]
+    diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return sl_weight*charbonnier_loss(diff_x, sl_exp, 1) + \
-           sl_weight*charbonnier_loss(diff_y, sl_exp, 1)
+    return sl_weight*charbonnier_loss(diff_y, sl_exp, 1) + \
+           sl_weight*charbonnier_loss(diff_x, sl_exp, 1)
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +
@@ -87,25 +87,25 @@ def weighted_smoothness_loss(im1, im2, flow, config):
 
     # todo: no idea which image to take...
     if negative_flow:
-        image = im1
-    else:
         image = im2
+    else:
+        image = im1
 
     # todo: no idea if downsampling or upsampling is better...
     if image.shape[2] != flow.shape[2]:
         image = F.interpolate(input=image, scale_factor=flow.shape[2]/im1.shape[2], mode='bilinear').to(device)
 
-    diff_flow_x = abs(flow[:, :, :-1, :] - flow[:, :, 1:, :])
-    diff_flow_y = abs(flow[:, :, :, :-1] - flow[:, :, :, 1:])
+    diff_flow_y = abs(flow[:, :, 1:, :] - flow[:, :, :-1, :])
+    diff_flow_x = abs(flow[:, :, :, 1:] - flow[:, :, :, :-1])
 
-    diff_img_x = abs(image[:, :, :-1, :] - image[:, :, 1:, :])
-    diff_img_y = abs(image[:, :, :, :-1] - image[:, :, :, 1:])
+    diff_img_y = abs(image[:, :, 1:, :] - image[:, :, :-1, :])
+    diff_img_x = abs(image[:, :, :, 1:] - image[:, :, :, :-1])
 
-    exp_x = torch.exp(-torch.sum(diff_img_x, dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
-    exp_y = torch.exp(-torch.sum(diff_img_y, dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
+    exp_y = torch.exp(-torch.mean(diff_img_y, dim=1, keepdim=True)).expand(-1,2,-1,-1)
+    exp_x = torch.exp(-torch.mean(diff_img_x, dim=1, keepdim=True)).expand(-1,2,-1,-1)
 
-    return sl_weight*torch.sum(diff_flow_x * exp_x) + \
-           sl_weight*torch.sum(diff_flow_y * exp_y)
+    return sl_weight*torch.sum(diff_flow_y * exp_y) + \
+           sl_weight*torch.sum(diff_flow_x * exp_x)
 
 
 

@@ -34,7 +34,7 @@ def get_configspace():
     cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='sl_weight', lower=1, upper=100000, log=True, default_value=100))
     cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='sl_exp', lower=0.5, upper=2, log=True, default_value=1))
     cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='pl_exp', lower=0.5, upper=2, log=True, default_value=1))
-    cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='negative_flow', choices=[False, True], default_value=False))
+    cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='forward_flow', choices=[False, True], default_value=False))
     cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='weighted_sl_loss', choices=[False, True], default_value=False))
 
     return cs

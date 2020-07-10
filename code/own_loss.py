@@ -7,13 +7,13 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 def charbonnier_loss(input, alpha, beta):
     eps = 0.001 # from reference implementation
     sq = input*input*beta*beta + torch.ones(input.shape).to(device) * eps*eps
-    return torch.sum(torch.pow(sq, alpha))
+    return torch.mean(torch.pow(sq, alpha).view(-1))
 
 
 def photometric_loss(im1, im2, flow, config):
     """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
     """
-    negative_flow = config['negative_flow']
+    forward_flow = config['forward_flow']
     pl_exp = config['pl_exp']
 
     # upscaling in case the height does not match. Assumes image ratio is correct
@@ -21,7 +21,7 @@ def photometric_loss(im1, im2, flow, config):
         flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear').to(device)
 
     # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
-    if negative_flow:
+    if forward_flow:
         image = im1
         image_target = im2
     else:
@@ -37,7 +37,7 @@ def photometric_loss(im1, im2, flow, config):
     yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
     grid = torch.cat((xx, yy), 1).float().to(device)
 
-    if negative_flow:
+    if forward_flow:
         vgrid = grid - flow
     else:
         vgrid = grid + flow
@@ -83,10 +83,10 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     #            |grad V_y| * exp(-|grad I_y|)
 
     sl_weight = config['sl_weight']
-    negative_flow = config['negative_flow']
+    forward_flow = config['forward_flow']
 
     # todo: no idea which image to take...
-    if negative_flow:
+    if forward_flow:
         image = im2
     else:
         image = im1
@@ -104,8 +104,8 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     exp_y = torch.exp(-torch.mean(diff_img_y, dim=1, keepdim=True)).expand(-1,2,-1,-1)
     exp_x = torch.exp(-torch.mean(diff_img_x, dim=1, keepdim=True)).expand(-1,2,-1,-1)
 
-    return sl_weight*torch.sum(diff_flow_y * exp_y) + \
-           sl_weight*torch.sum(diff_flow_x * exp_x)
+    return sl_weight*torch.mean((diff_flow_y * exp_y).view(-1)) + \
+           sl_weight*torch.mean((diff_flow_x * exp_x).view(-1))
 
 
 

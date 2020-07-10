@@ -101,8 +101,8 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     diff_img_x = abs(image[:, :, :-1, :] - image[:, :, 1:, :])
     diff_img_y = abs(image[:, :, :, :-1] - image[:, :, :, 1:])
 
-    exp_x = torch.exp(-torch.sum(diff_img_x), dim=1).unsqueeze(1).expand(-1,2,-1,-1)
-    exp_y = torch.exp(-torch.sum(diff_img_y), dim=1).unsqueeze(1).expand(-1,2,-1,-1)
+    exp_x = torch.exp(-torch.sum(diff_img_x, dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
+    exp_y = torch.exp(-torch.sum(diff_img_y, dim=1)).unsqueeze(1).expand(-1,2,-1,-1)
 
     return sl_weight*torch.sum(diff_flow_x * exp_x) + \
            sl_weight*torch.sum(diff_flow_y * exp_y)

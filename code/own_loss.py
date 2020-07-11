@@ -4,10 +4,10 @@ import torch.nn.functional as F
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
-def charbonnier_loss(input, alpha, beta):
-    eps = 0.001 # from reference implementation
-    sq = input*input*beta*beta + torch.ones(input.shape).to(device) * eps*eps
-    return torch.mean(torch.pow(sq, alpha))
+def charbonnier_loss(input, alpha):
+    eps = 1e-9 # from reference implementation
+    sq = torch.pow(input,2) + eps*eps
+    return torch.sum(torch.pow(sq, alpha))
 
 
 def photometric_loss(im1, im2, flow, config):
@@ -18,7 +18,8 @@ def photometric_loss(im1, im2, flow, config):
 
     # upscaling in case the height does not match. Assumes image ratio is correct
     if im1.shape[2] != flow.shape[2]:
-        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear').to(device)
+        im1 = F.interpolate(input=im1, scale_factor=flow.shape[2]/im1.shape[2], mode='bilinear').to(device)
+        im2 = F.interpolate(input=im2, scale_factor=flow.shape[2]/im2.shape[2], mode='bilinear').to(device)
 
     # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
     if forward_flow:
@@ -49,10 +50,6 @@ def photometric_loss(im1, im2, flow, config):
     vgrid = vgrid.permute(0, 2, 3, 1)
 
     warped_image = F.grid_sample(image, vgrid)
-    mask = torch.autograd.Variable(torch.ones(image.size())).cuda()
-    mask = F.grid_sample(mask, vgrid)
-    mask[mask < 0.999] = 0
-    mask[mask > 0] = 1
 
     # for debug purpose
     # save_image(im1[0], 'im1.png')
@@ -62,7 +59,7 @@ def photometric_loss(im1, im2, flow, config):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return charbonnier_loss((warped_image - image_target)*mask, pl_exp, 1)
+    return charbonnier_loss(warped_image - image_target, pl_exp) / 3 / im1.size(0)
 
 
 def smoothness_loss(flow, config):
@@ -73,8 +70,8 @@ def smoothness_loss(flow, config):
     diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return sl_weight*charbonnier_loss(diff_y, sl_exp, 1) + \
-           sl_weight*charbonnier_loss(diff_x, sl_exp, 1)
+    return sl_weight*charbonnier_loss(diff_y, sl_exp) / 2 / flow.size(0)  + \
+           sl_weight*charbonnier_loss(diff_x, sl_exp) / 2 / flow.size(0)
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +
@@ -104,8 +101,8 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     exp_y = torch.exp(-torch.mean(diff_img_y, dim=1, keepdim=True)).expand(-1,2,-1,-1)
     exp_x = torch.exp(-torch.mean(diff_img_x, dim=1, keepdim=True)).expand(-1,2,-1,-1)
 
-    return sl_weight*torch.mean((diff_flow_y * exp_y)) + \
-           sl_weight*torch.mean((diff_flow_x * exp_x))
+    return sl_weight*torch.mean((diff_flow_y * exp_y))  / 2 / im1.size(0) + \
+           sl_weight*torch.mean((diff_flow_x * exp_x))  / 2 / im1.size(0)
 
 
 

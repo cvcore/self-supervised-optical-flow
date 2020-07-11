@@ -52,13 +52,13 @@ parser.add_argument('--epoch-size', default=1000, type=int, metavar='N',
                     help='manual epoch size (will match dataset size if set to 0)')
 parser.add_argument('-b', '--batch-size', default=8, type=int,
                     metavar='N', help='mini-batch size')
-parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
+parser.add_argument('--lr', '--learning-rate', default=2e-5, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum for sgd, alpha parameter for adam')
 parser.add_argument('--beta', default=0.999, type=float, metavar='M',
                     help='beta parameter for adam')
-parser.add_argument('--weight-decay', '--wd', default=4e-4, type=float,
+parser.add_argument('--weight-decay', '--wd', default=1e-8, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--bias-decay', default=0, type=float,
                     metavar='B', help='bias decay')
@@ -68,7 +68,7 @@ parser.add_argument('--multiscale-weights', '-w', default=[0.005,0.01,0.02,0.08,
 parser.add_argument('--sparse', action='store_true',
                     help='look for NaNs in target flow when computing EPE, avoid if flow is garantied to be dense,'
                     'automatically seleted when choosing a KITTIdataset')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
+parser.add_argument('--print-freq', '-p', default=200, type=int,
                     metavar='N', help='print frequency')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -76,7 +76,7 @@ parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',
                     help='don\'t append date timestamp to folder' )
-parser.add_argument('--div-flow', default=20,
+parser.add_argument('--div-flow', default=1,
                     help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
 parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
@@ -124,12 +124,12 @@ def main(config=get_default_config()):
     # Data loading code
     input_transform = transforms.Compose([
         flow_transforms.ArrayToTensor(),
-        transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
-        transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
+        #transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
+        #transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
+        transforms.Normalize(mean=[0, 0, 0], std=[1, 1, 1])
     ])
     target_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor(),
-        #transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
+        flow_transforms.ArrayToTensor()
     ])
 
     if 'KITTI' in args.dataset:
@@ -284,7 +284,9 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
         return losses.avg, flow2_EPEs.avg
     else:
         # use self-supervised loss
-        for i, (input, target) in enumerate(train_loader):
+        scale_weights = args.multiscale_weights
+
+        for it, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
             target = target.to(device)
@@ -293,23 +295,34 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             input = torch.cat(input,1).to(device)
             pred = model(input)
 
-            flow = pred[0]
+            pl_loss = 0
+            pl_loss_list = []
+            for i in range(len(pred)):
+                flow = pred[i]
+                loss = photometric_loss(im1, im2, flow, config) * scale_weights[i]
+                pl_loss += loss
+                pl_loss_list.append(loss)
 
-            pl_loss = photometric_loss(im1, im2, flow, config)
-
+            sl_loss = 0
+            sl_loss_list = []
             if config['weighted_sl_loss']:
-                sl_loss = weighted_smoothness_loss(im1, im2, flow, config)
+                for i in range(len(pred)):
+                    flow = pred[i]
+                    loss = weighted_smoothness_loss(im1, im2, flow, config) * scale_weights[i]
+                    sl_loss += loss
+                    sl_loss_list.append(loss)
+
             else:
-                sl_loss = smoothness_loss(flow, config)
-
-            # smoothness loss for multi resolution flow pyramid
-            for flow_intermediate in pred[1:]:
-                sl_loss += smoothness_loss(flow_intermediate, config)
-
+                # smoothness loss for multi resolution flow pyramid
+                for i in range(len(pred)):
+                    flow = pred[i]
+                    loss = smoothness_loss(flow, config) * scale_weights[i]
+                    sl_loss += loss
+                    sl_loss_list.append(loss)
             # to check the magnitude of both losses
-            # print('---')
-            # print(pl_loss)
-            # print(sl_loss)
+            if it % 500 == 0:
+                print(str(pl_loss_list))
+                print(str(sl_loss_list))
 
             loss = pl_loss + sl_loss
 
@@ -328,12 +341,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if i % args.print_freq == 0:
+            if it % args.print_freq == 0:
                 print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
-                      .format(epoch, i, epoch_size, batch_time,
+                      .format(epoch, it, epoch_size, batch_time,
                               data_time, losses, flow2_EPEs))
             n_iter += 1
-            if i >= epoch_size:
+            if it >= epoch_size:
                 break
 
         return losses.avg, flow2_EPEs.avg

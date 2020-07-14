@@ -74,7 +74,7 @@ def smoothness_loss(flow, config):
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
     # return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
     #        sl_weight * charbonnier_loss(diff_x, sl_exp)
-    return sl_weight * (F.l1_loss(diff_y, 0) + F.l1_loss(diff_x, 0))
+    return sl_weight * (F.l1_loss(diff_y, torch.zeros_like(diff_y)) + F.l1_loss(diff_x, torch.zeros_like(diff_x)))
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +

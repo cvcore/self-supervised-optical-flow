@@ -7,12 +7,13 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 def charbonnier_loss(input, alpha):
     eps = 1e-9 # from reference implementation
     sq = torch.pow(input,2) + eps*eps
-    return torch.sum(torch.pow(sq, alpha))
+    return torch.mean(torch.pow(sq, alpha))
 
 
 def photometric_loss(im1, im2, flow, config):
     """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
     """
+    pl_weight = config['pl_weight']
     forward_flow = config['forward_flow']
     pl_exp = config['pl_exp']
 
@@ -59,7 +60,8 @@ def photometric_loss(im1, im2, flow, config):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return charbonnier_loss(warped_image - image_target, pl_exp) / 3 / im1.size(0)
+    # return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
+    return pl_weight * F.l1_loss(warped_image, image_target)
 
 
 def smoothness_loss(flow, config):
@@ -70,8 +72,9 @@ def smoothness_loss(flow, config):
     diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return sl_weight*charbonnier_loss(diff_y, sl_exp) / 2 / flow.size(0)  + \
-           sl_weight*charbonnier_loss(diff_x, sl_exp) / 2 / flow.size(0)
+    # return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
+    #        sl_weight * charbonnier_loss(diff_x, sl_exp)
+    return sl_weight * (F.l1_loss(diff_y, 0) + F.l1_loss(diff_x, 0))
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +
@@ -101,8 +104,8 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     exp_y = torch.exp(-torch.mean(diff_img_y, dim=1, keepdim=True)).expand(-1,2,-1,-1)
     exp_x = torch.exp(-torch.mean(diff_img_x, dim=1, keepdim=True)).expand(-1,2,-1,-1)
 
-    return sl_weight*torch.mean((diff_flow_y * exp_y))  / 2 / im1.size(0) + \
-           sl_weight*torch.mean((diff_flow_x * exp_x))  / 2 / im1.size(0)
+    return sl_weight*torch.mean((diff_flow_y * exp_y)) + \
+           sl_weight*torch.mean((diff_flow_x * exp_x))
 
 
 

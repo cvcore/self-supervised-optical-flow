@@ -52,13 +52,13 @@ parser.add_argument('--epoch-size', default=1000, type=int, metavar='N',
                     help='manual epoch size (will match dataset size if set to 0)')
 parser.add_argument('-b', '--batch-size', default=8, type=int,
                     metavar='N', help='mini-batch size')
-parser.add_argument('--lr', '--learning-rate', default=2e-5, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum for sgd, alpha parameter for adam')
 parser.add_argument('--beta', default=0.999, type=float, metavar='M',
                     help='beta parameter for adam')
-parser.add_argument('--weight-decay', '--wd', default=1e-8, type=float,
+parser.add_argument('--weight-decay', '--wd', default=4e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--bias-decay', default=0, type=float,
                     metavar='B', help='bias decay')
@@ -88,9 +88,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_default_config():
     cfg = {}
-    cfg["sl_weight"] = 1
-    cfg["sl_exp"] = 0.8
-    cfg["pl_exp"] = 0.5
+    cfg["sl_weight"] = 0
+    cfg["pl_weight"] = 1
+    cfg["sl_exp"] = 0.38
+    cfg["pl_exp"] = 0.25
     cfg["forward_flow"] = False
     cfg["weighted_sl_loss"] = False
     cfg["epochs"] = 1000
@@ -124,9 +125,8 @@ def main(config=get_default_config()):
     # Data loading code
     input_transform = transforms.Compose([
         flow_transforms.ArrayToTensor(),
-        #transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
-        #transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
-        transforms.Normalize(mean=[0, 0, 0], std=[1, 1, 1])
+        transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
+        transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
     ])
     target_transform = transforms.Compose([
         flow_transforms.ArrayToTensor()
@@ -284,8 +284,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
         return losses.avg, flow2_EPEs.avg
     else:
         # use self-supervised loss
-        scale_weights = args.multiscale_weights
-
         for it, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -299,7 +297,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             pl_loss_list = []
             for i in range(len(pred)):
                 flow = pred[i]
-                loss = photometric_loss(im1, im2, flow, config) * scale_weights[i]
+                loss = photometric_loss(im1, im2, flow, config)
                 pl_loss += loss
                 pl_loss_list.append(loss)
 
@@ -308,7 +306,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             if config['weighted_sl_loss']:
                 for i in range(len(pred)):
                     flow = pred[i]
-                    loss = weighted_smoothness_loss(im1, im2, flow, config) * scale_weights[i]
+                    loss = weighted_smoothness_loss(im1, im2, flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss)
 
@@ -316,7 +314,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                 # smoothness loss for multi resolution flow pyramid
                 for i in range(len(pred)):
                     flow = pred[i]
-                    loss = smoothness_loss(flow, config) * scale_weights[i]
+                    loss = smoothness_loss(flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss)
             # to check the magnitude of both losses

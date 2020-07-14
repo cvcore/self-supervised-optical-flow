@@ -8,3 +8,4 @@ dataset/kitti_stereo_flow
 *tfevents*
 *.zip
 .idea/
+wandb/

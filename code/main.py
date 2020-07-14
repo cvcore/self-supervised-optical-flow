@@ -16,7 +16,9 @@ from multiscaleloss import multiscaleEPE, realEPE
 from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss
 import datetime
 from tensorboardX import SummaryWriter
+import wandb
 from util import flow2rgb, AverageMeter, save_checkpoint, save_image
+
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__"))
@@ -44,8 +46,6 @@ parser.add_argument('--solver', default='adam',choices=['adam','sgd'],
                     help='solver algorithms')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers')
-parser.add_argument('--epochs', default=300, type=int, metavar='N',
-                    help='number of total epochs to run')
 # parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
 #                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--epoch-size', default=1000, type=int, metavar='N',
@@ -101,10 +101,13 @@ def get_default_config():
 def main(config=get_default_config()):
     global args, best_EPE
     args = parser.parse_args()
-    save_path = '{},{},{}epochs{},b{},lr{}'.format(
+    wandb.init(project="fr-optical-flow", sync_tensorboard=True)
+    wandb.config.update(args) # log configs passed in from progrom arguments
+    wandb.config.update(config) # log also configs coming from BOHB interface
+
+    save_path = '{},{},{},b{},lr{}'.format(
         args.arch,
         args.solver,
-        args.epochs,
         ',epochSize'+str(args.epoch_size) if args.epoch_size > 0 else '',
         args.batch_size,
         args.lr)
@@ -299,7 +302,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                 flow = pred[i]
                 loss = photometric_loss(im1, im2, flow, config)
                 pl_loss += loss
-                pl_loss_list.append(loss)
+                pl_loss_list.append(loss.item())
 
             sl_loss = 0
             sl_loss_list = []
@@ -308,7 +311,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                     flow = pred[i]
                     loss = weighted_smoothness_loss(im1, im2, flow, config)
                     sl_loss += loss
-                    sl_loss_list.append(loss)
+                    sl_loss_list.append(loss.item())
 
             else:
                 # smoothness loss for multi resolution flow pyramid
@@ -316,11 +319,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                     flow = pred[i]
                     loss = smoothness_loss(flow, config)
                     sl_loss += loss
-                    sl_loss_list.append(loss)
+                    sl_loss_list.append(loss.item())
             # to check the magnitude of both losses
             if it % 500 == 0:
-                print(str(pl_loss_list))
-                print(str(sl_loss_list))
+                print("[DEBUG] pl_loss:", str(pl_loss_list))
+                print("[DEBUG] sl_loss:", str(sl_loss_list))
 
             loss = pl_loss + sl_loss
 
@@ -328,6 +331,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             losses.update(loss.item(), target.size(0))
             flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_pl', pl_loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_sl', sl_loss.item(), n_iter)
             flow2_EPEs.update(flow2_EPE.item(), target.size(0))
 
             # compute gradient and do optimization step

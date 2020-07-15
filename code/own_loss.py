@@ -60,8 +60,11 @@ def photometric_loss(im1, im2, flow, config):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    # return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
-    return pl_weight * F.l1_loss(warped_image, image_target)
+    if config['use_l1_loss']:
+        return pl_weight * F.l1_loss(warped_image, image_target)
+    else:
+        return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
+
 
 
 def smoothness_loss(flow, config):
@@ -72,9 +75,11 @@ def smoothness_loss(flow, config):
     diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    # return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
-    #        sl_weight * charbonnier_loss(diff_x, sl_exp)
-    return sl_weight * (F.l1_loss(diff_y, torch.zeros_like(diff_y)) + F.l1_loss(diff_x, torch.zeros_like(diff_x)))
+    if config['use_l1_loss']:
+        return sl_weight * (F.l1_loss(diff_y, torch.zeros_like(diff_y)) + F.l1_loss(diff_x, torch.zeros_like(diff_x)))
+    else:
+        return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
+               sl_weight * charbonnier_loss(diff_x, sl_exp)
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +

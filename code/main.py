@@ -76,8 +76,7 @@ parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',
                     help='don\'t append date timestamp to folder' )
-parser.add_argument('--div-flow', default=1,
-                    help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
+parser.add_argument('--div-flow', default=20, help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
 parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
 
@@ -95,6 +94,9 @@ def get_default_config():
     cfg["forward_flow"] = False
     cfg["weighted_sl_loss"] = False
     cfg["epochs"] = 1000
+    cfg["multiscale_sl_loss"] = False
+    cfg["multiscale_pl_loss"] = False
+    cfg["use_l1_loss"] = False
     return cfg
 
 
@@ -132,7 +134,8 @@ def main(config=get_default_config()):
         transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
     ])
     target_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor()
+        flow_transforms.ArrayToTensor(),
+        transforms.Normalize(mean=[0,0],std=[args.div_flow,args.div_flow])
     ])
 
     if 'KITTI' in args.dataset:
@@ -299,27 +302,36 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             pl_loss = 0
             pl_loss_list = []
             for i in range(len(pred)):
-                flow = pred[i]
+                flow = pred[i] * args.div_flow
                 loss = photometric_loss(im1, im2, flow, config)
                 pl_loss += loss
                 pl_loss_list.append(loss.item())
+
+                if not config['multiscale_pl_loss']:
+                    break
 
             sl_loss = 0
             sl_loss_list = []
             if config['weighted_sl_loss']:
                 for i in range(len(pred)):
-                    flow = pred[i]
+                    flow = pred[i] * args.div_flow
                     loss = weighted_smoothness_loss(im1, im2, flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss.item())
 
+                    if not config['multiscale_sl_loss']:
+                        break
+
             else:
                 # smoothness loss for multi resolution flow pyramid
                 for i in range(len(pred)):
-                    flow = pred[i]
+                    flow = pred[i] * args.div_flow
                     loss = smoothness_loss(flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss.item())
+
+                    if not config['multiscale_sl_loss']:
+                        break
             # to check the magnitude of both losses
             if it % 500 == 0:
                 print("[DEBUG] pl_loss:", str(pl_loss_list))

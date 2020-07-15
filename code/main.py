@@ -16,7 +16,7 @@ from multiscaleloss import multiscaleEPE, realEPE
 from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss
 import datetime
 from tensorboardX import SummaryWriter
-import wandb
+#import wandb
 from util import flow2rgb, AverageMeter, save_checkpoint, save_image
 
 

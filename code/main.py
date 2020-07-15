@@ -202,6 +202,7 @@ def main(config=get_default_config()):
         return
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=0.5)
+    wandb.watch(model, log='all')
 
     #for epoch in range(args.start_epoch, args.epochs):
     for epoch in range(int(config["epochs"])):

@@ -341,6 +341,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             loss = pl_loss + sl_loss
 
             # record loss and EPE
+            flow = pred[0]
             losses.update(loss.item(), target.size(0))
             flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)

@@ -19,8 +19,7 @@ def photometric_loss(im1, im2, flow, config):
 
     # upscaling in case the height does not match. Assumes image ratio is correct
     if im1.shape[2] != flow.shape[2]:
-        im1 = F.interpolate(input=im1, scale_factor=flow.shape[2]/im1.shape[2], mode='bilinear').to(device)
-        im2 = F.interpolate(input=im2, scale_factor=flow.shape[2]/im2.shape[2], mode='bilinear').to(device)
+        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
 
     # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
     if forward_flow:

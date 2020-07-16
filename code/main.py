@@ -95,7 +95,7 @@ def get_default_config():
     cfg["weighted_sl_loss"] = False
     cfg["epochs"] = 1000
     cfg["multiscale_sl_loss"] = False
-    cfg["multiscale_pl_loss"] = False
+    cfg["multiscale_pl_loss"] = True
     cfg["use_l1_loss"] = False
     return cfg
 

@@ -13,7 +13,7 @@ import flow_transforms
 import models
 import datasets
 from multiscaleloss import multiscaleEPE, realEPE
-from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss, ternary_loss, second_order_loss, ssim
+from own_loss import *
 import datetime
 from tensorboardX import SummaryWriter
 # import wandb
@@ -91,20 +91,23 @@ def get_default_config():
     cfg = {}
     cfg["sl_weight"] = 0.002
     cfg["pl_weight"] = 1
+    cfg["fb_weight"] = 1
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25
-    cfg["forward_flow"] = False
+    cfg["fb_exp"] = 0.45
     cfg["weighted_sl_loss"] = True
     cfg["epochs"] = 1000
     cfg["multiscale_sl_loss"] = True
     cfg["multiscale_pl_loss"] = True
     cfg["multiscale_census_loss"] = True
     cfg["multiscale_ssim_loss"] = True
+    cfg["multiscale_fb_loss"] = True
     cfg["use_l1_loss"] = False
     cfg["unflow"] = True
     cfg["sl"] = True
     cfg["census"] = True
     cfg["ssim"] = False
+    cfg["fb"] = True
 
 
     return cfg
@@ -300,6 +303,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
 
         return losses.avg, flow2_EPEs.avg
     elif args.unflow:
+        weights = [0.005, 0.01, 0.02, 0.08, 0.32]
+
         for it, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -311,19 +316,18 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             input_bw = torch.cat((im2, im1), 1).to(device)
             pred_bw = model(input_bw)
 
+
+
             census_loss = 0
             census_loss_list = []
             if config['census']:
-
                 #weights = [1, 0.34, 0.31, 0.27, 0.09]
-                weights = [0.005, 0.01, 0.02, 0.08, 0.32]
                 #max_dist = [3, 2, 2, 1, 1]
-
                 for i in range(len(pred_fw)):
                     flow_fw = pred_fw[i] * args.div_flow
                     flow_bw = pred_bw[i] * args.div_flow
-                    loss = ternary_loss(im1, im2,  flow_fw, max_distance=1, forward_flow=False) +\
-                        ternary_loss(im2, im1, flow_bw,max_distance=1,forward_flow=False)
+                    loss = ternary_loss(im1, im2,  flow_fw, max_distance=1) +\
+                        ternary_loss(im2, im1, flow_bw,max_distance=1)
                     census_loss += loss * weights[i]
                     census_loss_list.append(loss.item())
                     if not config['multiscale_census_loss']:
@@ -332,7 +336,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             sl_loss = 0
             sl_loss_list = []
             if config['sl']:
-                weights = [0.005, 0.01, 0.02, 0.08, 0.32]
                 for i in range(len(pred_fw)):
                     flow_fw = pred_fw[i] * args.div_flow
                     flow_bw = pred_bw[i] * args.div_flow
@@ -341,24 +344,38 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                     sl_loss_list.append(loss.item())
                     if not config['multiscale_sl_loss']:
                         break
+
             ssim_loss = 0
             ssim_loss_list = []
             if config['ssim']:
-
                 for i in range(len(pred_bw)):
                     flow_bw = pred_bw[i] * args.div_flow
                     loss = ssim(im1,im2,flow_bw)
-                    ssim_loss += loss * args.multiscale_weights[i]
+                    ssim_loss += loss * weights[i]
                     ssim_loss_list.append(loss.item())
                     if not config['multiscale_ssim_loss']:
                         break
+
+            fb_loss = 0
+            fb_loss_list = []
+            if config['fb']:
+                for i in range(len(pred_bw)):
+                    flow_fw = pred_fw[i] * args.div_flow
+                    flow_bw = pred_bw[i] * args.div_flow
+                    loss = forward_backward_loss(im1=im1, im2=im2, flow_fw=flow_fw, flow_bw=flow_bw, config=config)
+                    fb_loss += loss * weights[i]
+                    fb_loss_list.append(loss.item())
+                    if not config['multiscale_fb_loss']:
+                        break
+
             # to check the magnitude of both losses
             if it % 500 == 0:
                 print("[DEBUG] census_loss:", str(census_loss_list))
                 print("[DEBUG] sl_loss:", str(sl_loss_list))
                 print("[DEBUG] ssim_loss:", str(ssim_loss_list))
+                print("[DEBUG] fb_loss:", str(fb_loss_list))
 
-            loss = census_loss + sl_loss + ssim_loss
+            loss = census_loss + sl_loss + ssim_loss + fb_loss
 
             # record loss and EPE
             flow = pred_bw[0]

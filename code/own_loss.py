@@ -12,24 +12,9 @@ def charbonnier_loss(input, alpha):
     return torch.mean(torch.pow(sq, alpha))
 
 
-def photometric_loss(im1, im2, flow, config):
-    """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
-    """
-    pl_weight = config['pl_weight']
-    forward_flow = config['forward_flow']
-    pl_exp = config['pl_exp']
-
-    # upscaling in case the height does not match. Assumes image ratio is correct
-    if im1.shape[2] != flow.shape[2]:
-        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
-
-    # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
-    if forward_flow:
-        image = im1
-        image_target = im2
-    else:
-        image = im2
-        image_target = im1
+def image_warp(image, flow, with_mask=False):
+    if image.shape[2] != flow.shape[2]:
+        flow = F.interpolate(input=flow, scale_factor=image.shape[2]/flow.shape[2], mode='bilinear')
 
     B, C, H, W = image.size()
 
@@ -39,11 +24,7 @@ def photometric_loss(im1, im2, flow, config):
     xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
     yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
     grid = torch.cat((xx, yy), 1).float().to(device)
-
-    if forward_flow:
-        vgrid = grid - flow
-    else:
-        vgrid = grid + flow
+    vgrid = grid + flow
 
     # scale grid to [-1,1]
     vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
@@ -51,7 +32,56 @@ def photometric_loss(im1, im2, flow, config):
 
     vgrid = vgrid.permute(0, 2, 3, 1)
 
-    warped_image = F.grid_sample(image, vgrid)
+    output = F.grid_sample(image, vgrid)
+
+    if with_mask:
+        mask = torch.autograd.Variable(torch.ones(flow.size())).cuda()
+        mask = F.grid_sample(mask, vgrid)
+        mask[mask < 0.9999] = 0
+        mask[mask > 0] = 1
+        return output, mask
+    else:
+        return output
+
+
+def length_sq(mat):
+    return torch.sum(torch.pow(mat, 2), dim=1, keepdim=True)
+
+
+def forward_backward_loss(im1, im2, flow_fw, flow_bw, config):
+    fb_weight = config['fb_weight']
+    fb_exp = config['fb_exp']
+
+    flow_fw = F.interpolate(input=flow_fw, scale_factor=im1.shape[2]/flow_fw.shape[2], mode='bilinear')
+    flow_bw = F.interpolate(input=flow_bw, scale_factor=im2.shape[2]/flow_bw.shape[2], mode='bilinear')
+
+    im2_warped, mask_fw = image_warp(im2, flow_fw, with_mask=True)
+    im1_warped, mask_bw = image_warp(im1, flow_bw, with_mask=True)
+
+    flow_bw_warped = image_warp(flow_bw, flow_fw)
+    flow_fw_warped = image_warp(flow_fw, flow_bw)
+    flow_diff_fw = flow_fw + flow_bw_warped
+    flow_diff_bw = flow_bw + flow_fw_warped
+    mag_sq_fw = length_sq(flow_fw) + length_sq(flow_bw_warped)
+    mag_sq_bw = length_sq(flow_bw) + length_sq(flow_fw_warped)
+    occ_thresh_fw =  0.01 * mag_sq_fw + 0.5
+    occ_thresh_bw =  0.01 * mag_sq_bw + 0.5
+
+    fb_occ_fw = (length_sq(flow_diff_fw) > occ_thresh_fw).float()
+    fb_occ_bw = (length_sq(flow_diff_bw) > occ_thresh_bw).float()
+    mask_fw *= (1 - fb_occ_fw)
+    mask_bw *= (1 - fb_occ_bw)
+
+    return fb_weight * charbonnier_loss_unflow(flow_diff_fw, mask=mask_fw, alpha=fb_exp) + \
+           fb_weight * charbonnier_loss_unflow(flow_diff_bw, mask=mask_bw, alpha=fb_exp)
+
+def photometric_loss(im1, im2, flow, config):
+    """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
+    """
+    pl_weight = config['pl_weight']
+    pl_exp = config['pl_exp']
+
+    warped_image = image_warp(im2, flow)
 
     # for debug purpose
     # save_image(im1[0], 'im1.png')
@@ -60,12 +90,10 @@ def photometric_loss(im1, im2, flow, config):
     # return
 
     # apply charbonnier loss
-    # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
     if config['use_l1_loss']:
-        return pl_weight * F.l1_loss(warped_image, image_target)
+        return pl_weight * F.l1_loss(warped_image, im1)
     else:
-        return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
-
+        return pl_weight * charbonnier_loss(warped_image - im1, pl_exp)
 
 
 def smoothness_loss(flow, config):
@@ -85,6 +113,7 @@ def smoothness_loss(flow, config):
         return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
                sl_weight * charbonnier_loss(diff_x, sl_exp)
 
+
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +
     #            |grad U_y| * exp(-|grad I_y|) +
@@ -92,13 +121,7 @@ def weighted_smoothness_loss(im1, im2, flow, config):
     #            |grad V_y| * exp(-|grad I_y|)
 
     sl_weight = config['sl_weight']
-    forward_flow = config['forward_flow']
-
-    # todo: no idea which image to take...
-    if forward_flow:
-        image = im2
-    else:
-        image = im1
+    image = im1
 
     # todo: no idea if downsampling or upsampling is better...
     if image.shape[2] != flow.shape[2]:
@@ -118,41 +141,11 @@ def weighted_smoothness_loss(im1, im2, flow, config):
 
 
 
-
 # unflow losses adapted from the official tensorflow implementation
-def ternary_loss(im1, im2, flow, max_distance=1,forward_flow = False):
+def ternary_loss(im1, im2, flow, max_distance=1):
 
-    if im1.shape[2] != flow.shape[2]:
-        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
-
-    if forward_flow:
-        image = im1
-        im_target = im2
-    else:
-        image = im2
-        im_target = im1
-
-    B, C, H, W = image.size()
-
-    # mesh grid
-    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
-    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
-    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    grid = torch.cat((xx, yy), 1).float().to(device)
-
-    if forward_flow:
-        vgrid = grid - flow
-    else:
-        vgrid = grid + flow
-
-    # scale grid to [-1,1]
-    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
-    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
-
-    vgrid = vgrid.permute(0, 2, 3, 1)
-
-    im_warped = F.grid_sample(image, vgrid)
+    im_warped = image_warp(im2, flow)
+    im_target = im1
 
     patch_size = 2 * max_distance + 1
 
@@ -274,38 +267,9 @@ def rgb2gray(rgb):
     gray = np.dot(rgb[...,:3], [0.2125, 0.7154, 0.0721])
     return gray.astype('float32')
 
-def ssim(im1,im2,flow,forward_flow = False):
 
-    if im1.shape[2] != flow.shape[2]:
-        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
+def ssim(im1,im2,flow):
+    im_warped = image_warp(im2, flow)
 
-    if forward_flow:
-        image = im1
-        im_target = im2
-    else:
-        image = im2
-        im_target = im1
-
-    B, C, H, W = image.size()
-
-    # mesh grid
-    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
-    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
-    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    grid = torch.cat((xx, yy), 1).float().to(device)
-
-    if forward_flow:
-        vgrid = grid - flow
-    else:
-        vgrid = grid + flow
-
-    # scale grid to [-1,1]
-    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
-    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
-
-    vgrid = vgrid.permute(0, 2, 3, 1)
-
-    im_warped = F.grid_sample(image, vgrid)
     ssim_loss = 1.0 - ssim_module.ssim(im1, im_warped, window_size=11, size_average=True)
     return ssim_loss * 0.6

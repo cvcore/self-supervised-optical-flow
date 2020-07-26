@@ -87,14 +87,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_default_config():
     cfg = {}
-    cfg["sl_weight"] = 0
+    cfg["sl_weight"] = 0.03
     cfg["pl_weight"] = 1
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25
     cfg["forward_flow"] = False
     cfg["weighted_sl_loss"] = False
     cfg["epochs"] = 1000
-    cfg["multiscale_sl_loss"] = False
+    cfg["multiscale_sl_loss"] = True
     cfg["multiscale_pl_loss"] = True
     cfg["use_l1_loss"] = False
     return cfg

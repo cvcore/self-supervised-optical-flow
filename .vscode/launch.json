@@ -10,8 +10,8 @@
             "request": "launch",
             "program": "${workspaceFolder}/code/main.py",
             "console": "integratedTerminal",
-            "args": ["${workspaceFolder}/../../dataset/kitti_scene_flow/training",
-                     "--dataset", "KITTI_occ"],
+            "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data/",
+                     "--dataset", "flying_chairs"],
         }
     ]
 }

@@ -13,12 +13,11 @@ import flow_transforms
 import models
 import datasets
 from multiscaleloss import multiscaleEPE, realEPE
-from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss
+from own_loss import photometric_loss, smoothness_loss, weighted_smoothness_loss, ternary_loss, second_order_loss, ssim
 import datetime
 from tensorboardX import SummaryWriter
-#import wandb
+# import wandb
 from util import flow2rgb, AverageMeter, save_checkpoint, save_image
-
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__"))
@@ -31,7 +30,7 @@ parser.add_argument('data', metavar='DIR',
 parser.add_argument('--dataset', metavar='DATASET', default='flying_chairs',
                     choices=dataset_names,
                     help='dataset type : ' +
-                    ' | '.join(dataset_names))
+                         ' | '.join(dataset_names))
 group = parser.add_mutually_exclusive_group()
 group.add_argument('-s', '--split-file', default=None, type=str,
                    help='test-val split file')
@@ -41,8 +40,8 @@ group.add_argument('--split-value', default=0.8, type=float,
 parser.add_argument('--arch', '-a', metavar='ARCH', default='flownets',
                     choices=model_names,
                     help='model architecture, overwritten if pretrained is specified: ' +
-                    ' | '.join(model_names))
-parser.add_argument('--solver', default='adam',choices=['adam','sgd'],
+                         ' | '.join(model_names))
+parser.add_argument('--solver', default='adam', choices=['adam', 'sgd'],
                     help='solver algorithms')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers')
@@ -50,7 +49,7 @@ parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
 #                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--epoch-size', default=1000, type=int, metavar='N',
                     help='manual epoch size (will match dataset size if set to 0)')
-parser.add_argument('-b', '--batch-size', default=8, type=int,
+parser.add_argument('-b', '--batch-size', default=4, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
                     metavar='LR', help='initial learning rate')
@@ -62,12 +61,12 @@ parser.add_argument('--weight-decay', '--wd', default=4e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--bias-decay', default=0, type=float,
                     metavar='B', help='bias decay')
-parser.add_argument('--multiscale-weights', '-w', default=[0.005,0.01,0.02,0.08,0.32], type=float, nargs=5,
+parser.add_argument('--multiscale-weights', '-w', default=[0.005, 0.01, 0.02, 0.08, 0.32], type=float, nargs=5,
                     help='training weight for each scale, from highest resolution (flow2) to lowest (flow6)',
                     metavar=('W2', 'W3', 'W4', 'W5', 'W6'))
 parser.add_argument('--sparse', action='store_true',
                     help='look for NaNs in target flow when computing EPE, avoid if flow is garantied to be dense,'
-                    'automatically seleted when choosing a KITTIdataset')
+                         'automatically seleted when choosing a KITTIdataset')
 parser.add_argument('--print-freq', '-p', default=200, type=int,
                     metavar='N', help='print frequency')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -75,12 +74,14 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',
-                    help='don\'t append date timestamp to folder' )
-parser.add_argument('--div-flow', default=1,
+                    help='don\'t append date timestamp to folder')
+parser.add_argument('--div-flow', default=20,
                     help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
-parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
-parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
-
+parser.add_argument('--milestones', default=[100, 200, 300], metavar='N', nargs='*',
+                    help='epochs at which learning rate is divided by 2')
+parser.add_argument('--self-supervised-loss', default=True,
+                    help='use self-supervised loss (photometric and smoothness)')
+parser.add_argument('--unflow', default=True, help='use of ternary and second order losses from Unflow paper)')
 best_EPE = -1
 n_iter = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,66 +89,78 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_default_config():
     cfg = {}
-    cfg["sl_weight"] = 0
+    cfg["sl_weight"] = 0.002
     cfg["pl_weight"] = 1
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25
     cfg["forward_flow"] = False
-    cfg["weighted_sl_loss"] = False
+    cfg["weighted_sl_loss"] = True
     cfg["epochs"] = 1000
+    cfg["multiscale_sl_loss"] = True
+    cfg["multiscale_pl_loss"] = True
+    cfg["multiscale_census_loss"] = True
+    cfg["multiscale_ssim_loss"] = True
+    cfg["use_l1_loss"] = False
+    cfg["unflow"] = True
+    cfg["sl"] = True
+    cfg["census"] = True
+    cfg["ssim"] = False
+
+
     return cfg
 
 
 def main(config=get_default_config()):
     global args, best_EPE
     args = parser.parse_args()
-    #wandb.init(project="fr-optical-flow", sync_tensorboard=True)
-    #wandb.config.update(args) # log configs passed in from progrom arguments
-    #wandb.config.update(config) # log also configs coming from BOHB interface
+    # wandb.init(project="fr-optical-flow", sync_tensorboard=True)
+    # wandb.config.update(args) # log configs passed in from progrom arguments
+    # wandb.config.update(config) # log also configs coming from BOHB interface
 
     save_path = '{},{},{},b{},lr{}'.format(
         args.arch,
         args.solver,
-        ',epochSize'+str(args.epoch_size) if args.epoch_size > 0 else '',
+        ',epochSize' + str(args.epoch_size) if args.epoch_size > 0 else '',
         args.batch_size,
         args.lr)
     if not args.no_date:
         timestamp = datetime.datetime.now().strftime("%m-%d-%H:%M")
-        save_path = os.path.join(timestamp,save_path)
-    save_path = os.path.join(args.dataset,save_path)
+        save_path = os.path.join(timestamp, save_path)
+    save_path = os.path.join(args.dataset, save_path)
     print('=> will save everything to {}'.format(save_path))
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    train_writer = SummaryWriter(os.path.join(save_path,'train'))
-    test_writer = SummaryWriter(os.path.join(save_path,'test'))
+    train_writer = SummaryWriter(os.path.join(save_path, 'train'))
+    test_writer = SummaryWriter(os.path.join(save_path, 'test'))
     output_writers = []
     for i in range(3):
-        output_writers.append(SummaryWriter(os.path.join(save_path,'test',str(i))))
+        output_writers.append(SummaryWriter(os.path.join(save_path, 'test', str(i))))
 
     # Data loading code
     input_transform = transforms.Compose([
         flow_transforms.ArrayToTensor(),
-        transforms.Normalize(mean=[0,0,0], std=[255,255,255]),
-        transforms.Normalize(mean=[0.45,0.432,0.411], std=[1,1,1])
+        transforms.Normalize(mean=[0, 0, 0], std=[255, 255, 255]),
+        transforms.Normalize(mean=[0.45, 0.432, 0.411], std=[1, 1, 1])
     ])
     target_transform = transforms.Compose([
-        flow_transforms.ArrayToTensor()
+        flow_transforms.ArrayToTensor(),
+        transforms.Normalize(mean=[0, 0], std=[args.div_flow, args.div_flow])
     ])
 
     if 'KITTI' in args.dataset:
         args.sparse = True
     if args.sparse:
         co_transform = flow_transforms.Compose([
-            flow_transforms.RandomCrop((320,448)),
+            flow_transforms.RandomCrop((320, 448)),
             flow_transforms.RandomVerticalFlip(),
             flow_transforms.RandomHorizontalFlip()
         ])
     else:
         co_transform = flow_transforms.Compose([
             flow_transforms.RandomTranslate(10),
-            flow_transforms.RandomRotate(10,5),
-            flow_transforms.RandomCrop((320,448)),
+            flow_transforms.RandomRotate(10, 5),
+            flow_transforms.RandomCrop((320, 448)),
             flow_transforms.RandomVerticalFlip(),
             flow_transforms.RandomHorizontalFlip()
         ])
@@ -160,7 +173,7 @@ def main(config=get_default_config()):
         co_transform=co_transform,
         split=args.split_file if args.split_file else args.split_value
     )
-    print('{} samples found, {} train samples and {} test samples '.format(len(test_set)+len(train_set),
+    print('{} samples found, {} train samples and {} test samples '.format(len(test_set) + len(train_set),
                                                                            len(train_set),
                                                                            len(test_set)))
     train_loader = torch.utils.data.DataLoader(
@@ -183,7 +196,7 @@ def main(config=get_default_config()):
     model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
 
-    assert(args.solver in ['adam', 'sgd'])
+    assert (args.solver in ['adam', 'sgd'])
     print('=> setting {} solver'.format(args.solver))
     param_groups = [{'params': model.module.bias_parameters(), 'weight_decay': args.bias_decay},
                     {'params': model.module.weight_parameters(), 'weight_decay': args.weight_decay}]
@@ -199,8 +212,9 @@ def main(config=get_default_config()):
         return
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=0.5)
+    # wandb.watch(model, log='all')
 
-    #for epoch in range(args.start_epoch, args.epochs):
+    # for epoch in range(args.start_epoch, args.epochs):
     for epoch in range(int(config["epochs"])):
 
         # train for one epoch
@@ -250,7 +264,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             # measure data loading time
             data_time.update(time.time() - end)
             target = target.to(device)
-            input = torch.cat(input,1).to(device)
+            input = torch.cat(input, 1).to(device)
 
             # compute output
             output = model(input)
@@ -258,7 +272,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                 # Since Target pooling is not very precise when sparse,
                 # take the highest resolution prediction and upsample it instead of downsampling target
                 h, w = target.size()[-2:]
-                output = [F.interpolate(output[0], (h,w)), *output[1:]]
+                output = [F.interpolate(output[0], (h, w)), *output[1:]]
 
             loss = multiscaleEPE(output, target, weights=args.multiscale_weights, sparse=args.sparse)
             flow2_EPE = args.div_flow * realEPE(output[0], target, sparse=args.sparse)
@@ -285,6 +299,97 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                 break
 
         return losses.avg, flow2_EPEs.avg
+    elif args.unflow:
+        for it, (input, target) in enumerate(train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            target = target.to(device)
+            im1 = input[0].to(device)
+            im2 = input[1].to(device)
+            input_fw = torch.cat(input, 1).to(device)
+            pred_fw = model(input_fw)
+            input_bw = torch.cat((im2, im1), 1).to(device)
+            pred_bw = model(input_bw)
+
+            census_loss = 0
+            census_loss_list = []
+            if config['census']:
+
+                #weights = [1, 0.34, 0.31, 0.27, 0.09]
+                weights = [0.005, 0.01, 0.02, 0.08, 0.32]
+                #max_dist = [3, 2, 2, 1, 1]
+
+                for i in range(len(pred_fw)):
+                    flow_fw = pred_fw[i] * args.div_flow
+                    flow_bw = pred_bw[i] * args.div_flow
+                    loss = ternary_loss(im1, im2,  flow_fw, max_distance=1, forward_flow=False) +\
+                        ternary_loss(im2, im1, flow_bw,max_distance=1,forward_flow=False)
+                    census_loss += loss * weights[i]
+                    census_loss_list.append(loss.item())
+                    if not config['multiscale_census_loss']:
+                        break
+
+            sl_loss = 0
+            sl_loss_list = []
+            if config['sl']:
+                weights = [0.005, 0.01, 0.02, 0.08, 0.32]
+                for i in range(len(pred_fw)):
+                    flow_fw = pred_fw[i] * args.div_flow
+                    flow_bw = pred_bw[i] * args.div_flow
+                    loss = smoothness_loss(flow_fw,config) + smoothness_loss(flow_bw,config)
+                    sl_loss += loss * weights[i]
+                    sl_loss_list.append(loss.item())
+                    if not config['multiscale_sl_loss']:
+                        break
+            ssim_loss = 0
+            ssim_loss_list = []
+            if config['ssim']:
+
+                for i in range(len(pred_bw)):
+                    flow_bw = pred_bw[i] * args.div_flow
+                    loss = ssim(im1,im2,flow_bw)
+                    ssim_loss += loss * args.multiscale_weights[i]
+                    ssim_loss_list.append(loss.item())
+                    if not config['multiscale_ssim_loss']:
+                        break
+            # to check the magnitude of both losses
+            if it % 500 == 0:
+                print("[DEBUG] census_loss:", str(census_loss_list))
+                print("[DEBUG] sl_loss:", str(sl_loss_list))
+                print("[DEBUG] ssim_loss:", str(ssim_loss_list))
+
+            loss = census_loss + sl_loss + ssim_loss
+
+            # record loss and EPE
+            flow = pred_bw[0]
+            losses.update(loss.item(), target.size(0))
+            flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
+            train_writer.add_scalar('train_loss', loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_census', census_loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_sl', sl_loss.item(), n_iter)
+            #train_writer.add_scalar('train_loss_ssim', ssim_loss.item(), n_iter)
+            flow2_EPEs.update(flow2_EPE.item(), target.size(0))
+
+            # compute gradient and do optimization step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            if it % args.print_freq == 0:
+                print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
+                      .format(epoch, it, epoch_size, batch_time,
+                              data_time, losses, flow2_EPEs))
+            n_iter += 1
+            if it >= epoch_size:
+                break
+
+        return losses.avg, flow2_EPEs.avg
+
+
     else:
         # use self-supervised loss
         for it, (input, target) in enumerate(train_loader):
@@ -293,33 +398,42 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             target = target.to(device)
             im1 = input[0].to(device)
             im2 = input[1].to(device)
-            input = torch.cat(input,1).to(device)
+            input = torch.cat(input, 1).to(device)
             pred = model(input)
 
             pl_loss = 0
             pl_loss_list = []
             for i in range(len(pred)):
-                flow = pred[i]
-                loss = args.multiscale_weights[i]*photometric_loss(im1, im2, flow, config)
+                flow = pred[i] * args.div_flow
+                loss = photometric_loss(im1, im2, flow, config)
                 pl_loss += loss
                 pl_loss_list.append(loss.item())
+
+                if not config['multiscale_pl_loss']:
+                    break
 
             sl_loss = 0
             sl_loss_list = []
             if config['weighted_sl_loss']:
                 for i in range(len(pred)):
-                    flow = pred[i]
-                    loss = args.multiscale_weights[i]*weighted_smoothness_loss(im1, im2, flow, config)
+                    flow = pred[i] * args.div_flow
+                    loss = weighted_smoothness_loss(im1, im2, flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss.item())
+
+                    if not config['multiscale_sl_loss']:
+                        break
 
             else:
                 # smoothness loss for multi resolution flow pyramid
                 for i in range(len(pred)):
-                    flow = pred[i]
-                    loss = args.multiscale_weights[i]*smoothness_loss(flow, config)
+                    flow = pred[i] * args.div_flow
+                    loss = smoothness_loss(flow, config)
                     sl_loss += loss
                     sl_loss_list.append(loss.item())
+
+                    if not config['multiscale_sl_loss']:
+                        break
             # to check the magnitude of both losses
             if it % 500 == 0:
                 print("[DEBUG] pl_loss:", str(pl_loss_list))
@@ -328,8 +442,9 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             loss = pl_loss + sl_loss
 
             # record loss and EPE
+            flow = pred[0]
             losses.update(loss.item(), target.size(0))
-            flow2_EPE = args.div_flow * realEPE(pred[0], target, sparse=args.sparse)
+            flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)
             train_writer.add_scalar('train_loss_pl', pl_loss.item(), n_iter)
             train_writer.add_scalar('train_loss_sl', sl_loss.item(), n_iter)
@@ -354,6 +469,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
 
         return losses.avg, flow2_EPEs.avg
 
+
 def validate(val_loader, model, epoch, output_writers):
     global args
 
@@ -366,11 +482,13 @@ def validate(val_loader, model, epoch, output_writers):
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.to(device)
-        input = torch.cat(input,1).to(device)
+        im1 = input[0].to(device)
+        im2 = input[1].to(device)
+        input = torch.cat((im2, im1), 1).to(device)
 
         # compute output
         output = model(input)
-        flow2_EPE = args.div_flow*realEPE(output, target, sparse=args.sparse)
+        flow2_EPE = args.div_flow * realEPE(output, target, sparse=args.sparse)
         # record EPE
         flow2_EPEs.update(flow2_EPE.item(), target.size(0))
 
@@ -380,10 +498,10 @@ def validate(val_loader, model, epoch, output_writers):
 
         if i < len(output_writers):  # log first output of first batches
             if epoch == 0:
-                mean_values = torch.tensor([0.45,0.432,0.411], dtype=input.dtype).view(3,1,1)
+                mean_values = torch.tensor([0.45, 0.432, 0.411], dtype=input.dtype).view(3, 1, 1)
                 output_writers[i].add_image('GroundTruth', flow2rgb(args.div_flow * target[0], max_value=10), 0)
-                output_writers[i].add_image('Inputs', (input[0,:3].cpu() + mean_values).clamp(0,1), 0)
-                output_writers[i].add_image('Inputs', (input[0,3:].cpu() + mean_values).clamp(0,1), 1)
+                output_writers[i].add_image('Inputs', (input[0, :3].cpu() + mean_values).clamp(0, 1), 0)
+                output_writers[i].add_image('Inputs', (input[0, 3:].cpu() + mean_values).clamp(0, 1), 1)
             output_writers[i].add_image('FlowNet Outputs', flow2rgb(args.div_flow * output[0], max_value=10), epoch)
 
         if i % args.print_freq == 0:

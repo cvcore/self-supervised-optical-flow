@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
-
+import numpy as np
+import torchvision
+import ssim_module
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
@@ -19,8 +21,7 @@ def photometric_loss(im1, im2, flow, config):
 
     # upscaling in case the height does not match. Assumes image ratio is correct
     if im1.shape[2] != flow.shape[2]:
-        im1 = F.interpolate(input=im1, scale_factor=flow.shape[2]/im1.shape[2], mode='bilinear').to(device)
-        im2 = F.interpolate(input=im2, scale_factor=flow.shape[2]/im2.shape[2], mode='bilinear').to(device)
+        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
 
     # adapted from https://github.com/NVlabs/PWC-Net/blob/master/PyTorch/models/PWCNet.py
     if forward_flow:
@@ -60,8 +61,11 @@ def photometric_loss(im1, im2, flow, config):
 
     # apply charbonnier loss
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    # return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
-    return pl_weight * F.l1_loss(warped_image, image_target)
+    if config['use_l1_loss']:
+        return pl_weight * F.l1_loss(warped_image, image_target)
+    else:
+        return pl_weight * charbonnier_loss(warped_image - image_target, pl_exp)
+
 
 
 def smoothness_loss(flow, config):
@@ -72,9 +76,14 @@ def smoothness_loss(flow, config):
     diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
 
     # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    # return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
-    #        sl_weight * charbonnier_loss(diff_x, sl_exp)
-    return sl_weight * (F.l1_loss(diff_y, torch.zeros_like(diff_y)) + F.l1_loss(diff_x, torch.zeros_like(diff_x)))
+    if config['use_l1_loss']:
+        return sl_weight * (F.l1_loss(diff_y, torch.zeros_like(diff_y)) + F.l1_loss(diff_x, torch.zeros_like(diff_x)))
+    elif config['unflow']:
+        return sl_weight * charbonnier_loss_unflow(diff_y) + \
+               sl_weight * charbonnier_loss_unflow(diff_x)
+    else:
+        return sl_weight * charbonnier_loss(diff_y, sl_exp) + \
+               sl_weight * charbonnier_loss(diff_x, sl_exp)
 
 def weighted_smoothness_loss(im1, im2, flow, config):
     # calculates |grad U_x| * exp(-|grad I_x|) +
@@ -110,10 +119,193 @@ def weighted_smoothness_loss(im1, im2, flow, config):
 
 
 
+# unflow losses adapted from the official tensorflow implementation
+def ternary_loss(im1, im2, flow, max_distance=1,forward_flow = False):
+
+    if im1.shape[2] != flow.shape[2]:
+        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
+
+    if forward_flow:
+        image = im1
+        im_target = im2
+    else:
+        image = im2
+        im_target = im1
+
+    B, C, H, W = image.size()
+
+    # mesh grid
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid = torch.cat((xx, yy), 1).float().to(device)
+
+    if forward_flow:
+        vgrid = grid - flow
+    else:
+        vgrid = grid + flow
+
+    # scale grid to [-1,1]
+    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
+    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
+
+    vgrid = vgrid.permute(0, 2, 3, 1)
+
+    im_warped = F.grid_sample(image, vgrid)
+
+    patch_size = 2 * max_distance + 1
+
+    def _ternary_transform(im):
+        B, C, H, W = im.size()
+        im = im.permute(0,2,3,1)
+        numpy_arr = np.array([(_.data).cpu().numpy() for _ in im])
+        numpy_arr_gray = np.array([rgb2gray(_).reshape(H, W, 1) for _ in numpy_arr])
+        intensities = torch.tensor(numpy_arr_gray).permute(0, 3, 1, 2).to(device)
+        #pil_im = [torchvision.transforms.functional.to_pil_image(_.cpu(), mode=None) for _ in im]
+        #intensities = [torchvision.transforms.functional.to_grayscale(pil, num_output_channels=1) for pil in pil_im]
+        #intensities = [torchvision.transforms.functional.to_tensor(_).reshape(1,H,W).to(device) for _ in intensities]
+        #intensities = torch.stack(intensities,dim=0)
+
+        out_channels = patch_size * patch_size
+        conv = torch.nn.Conv2d(in_channels=1,out_channels=out_channels, kernel_size=patch_size, stride=1, padding=1).to(device)
+        patches = conv(intensities)
+
+        transf = patches - intensities
+        transf_norm = transf / torch.sqrt(0.81 + torch.pow(transf,2))
+        return transf_norm
+
+    def _hamming_distance(t1, t2):
+        dist = torch.pow((t1 - t2),2)
+        dist_norm = dist / (0.1 + dist)
+        dist_sum = torch.sum(dist_norm, 3, keepdim=True)
+        return dist_sum
+
+    t1 = _ternary_transform(im_target)
+    t2 = _ternary_transform(im_warped)
+    dist = _hamming_distance(t1, t2)
+
+    #transform_mask = create_mask(mask, [[max_distance, max_distance],
+    #                                    [max_distance, max_distance]])
+    return charbonnier_loss_unflow(dist)
+
+def create_mask(tensor, paddings):
+
+    shape = tensor.shape
+    inner_width = shape[1] - (paddings[0] + paddings[1])
+    inner_height = shape[2] - (paddings[2] + paddings[3])
+    inner = torch.ones([inner_width, inner_height])
+
+    mask2d = torch.nn.functional.pad(inner, paddings)
+    mask3d = mask2d.unsqueeze(0).repeat([shape[0], 1, 1])
+    mask4d = mask3d.unsqueeze(3)
+    return mask4d.requires_grad_(False)
+
+
+def second_order_loss(flow):
+
+    delta_u, delta_v, mask = _second_order_deltas(flow)
+    loss_u = charbonnier_loss_unflow(delta_u, mask)
+    loss_v = charbonnier_loss_unflow(delta_v, mask)
+    return loss_u + loss_v
+
+def _second_order_deltas(flow):
+    print(flow.size())
+    mask_x = create_mask(flow, (0, 0, 1, 1))
+    mask_y = create_mask(flow, (1, 1, 0, 0))
+    mask_diag = create_mask(flow, (1, 1, 1, 1))
+    mask = torch.cat([mask_x, mask_y, mask_diag, mask_diag],dim=3)
+
+    filter_x = [[0, 0, 0],
+                [1, -2, 1],
+                [0, 0, 0]]
+    filter_y = [[0, 1, 0],
+                [0, -2, 0],
+                [0, 1, 0]]
+    filter_diag1 = [[1, 0, 0],
+                    [0, -2, 0],
+                    [0, 0, 1]]
+    filter_diag2 = [[0, 0, 1],
+                    [0, -2, 0],
+                    [1, 0, 0]]
+    weight_array = np.ones([3, 3, 1, 4])
+    weight_array[:, :, 0, 0] = filter_x
+    weight_array[:, :, 0, 1] = filter_y
+    weight_array[:, :, 0, 2] = filter_diag1
+    weight_array[:, :, 0, 3] = filter_diag2
+
+    flow_u, flow_v = torch.split(flow,2,dim=3)
+    conv = torch.nn.Conv2d(in_channels=1,out_channels=4,kernel_size=3,stride=1,padding = 1)
+    delta_u = conv(flow_u)
+    delta_v = conv(flow_v)
+    return delta_u, delta_v, mask
 
 
 
+def charbonnier_loss_unflow(x, mask=None, truncate=None, alpha=0.45, beta=1.0, epsilon=0.001):
+    """Compute the generalized charbonnier loss of the difference tensor x.
+    All positions where mask == 0 are not taken into account.
+    Args:
+        x: a tensor of shape [num_batch, height, width, channels].
+        mask: a mask of shape [num_batch, height, width, mask_channels],
+            where mask channels must be either 1 or the same number as
+            the number of channels of x. Entries should be 0 or 1.
+    Returns:
+        loss as tf.float32
+    """
 
+    batch, height, width, channels = x.shape
+    normalization = batch * height * width * channels
 
+    error = torch.pow(torch.pow(x * beta,2) + epsilon**2, alpha)
 
+    if mask is not None:
+        error = torch.mul(mask, error)
 
+    if truncate is not None:
+        error = torch.min(error, truncate)
+
+    return torch.sum(error) / normalization
+
+def rgb2gray(rgb):
+    """
+    this method converts rgb images to grayscale.
+    """
+    gray = np.dot(rgb[...,:3], [0.2125, 0.7154, 0.0721])
+    return gray.astype('float32')
+
+def ssim(im1,im2,flow,forward_flow = False):
+
+    if im1.shape[2] != flow.shape[2]:
+        flow = F.interpolate(input=flow, scale_factor=im1.shape[2]/flow.shape[2], mode='bilinear')
+
+    if forward_flow:
+        image = im1
+        im_target = im2
+    else:
+        image = im2
+        im_target = im1
+
+    B, C, H, W = image.size()
+
+    # mesh grid
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid = torch.cat((xx, yy), 1).float().to(device)
+
+    if forward_flow:
+        vgrid = grid - flow
+    else:
+        vgrid = grid + flow
+
+    # scale grid to [-1,1]
+    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
+    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
+
+    vgrid = vgrid.permute(0, 2, 3, 1)
+
+    im_warped = F.grid_sample(image, vgrid)
+    ssim_loss = 1.0 - ssim_module.ssim(im1, im_warped, window_size=11, size_average=True)
+    return ssim_loss * 0.6

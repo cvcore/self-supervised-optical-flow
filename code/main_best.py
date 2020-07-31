@@ -76,7 +76,7 @@ parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',
                     help='don\'t append date timestamp to folder' )
-parser.add_argument('--div-flow', default=20, help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
+parser.add_argument('--div-flow', default=1, help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
 parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
 

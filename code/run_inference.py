@@ -27,7 +27,7 @@ parser.add_argument('--output', '-o', metavar='DIR', default=None,
 parser.add_argument('--output-value', '-v', choices=['raw', 'vis', 'both'], default='both',
                     help='which value to output, between raw input (as a npy file) and color vizualisation (as an image file).'
                     ' If not set, will output both')
-parser.add_argument('--div-flow', default=20, type=float,
+parser.add_argument('--div-flow', default=1, type=float,
                     help='value by which flow will be divided. overwritten if stored in pretrained file')
 parser.add_argument("--img-exts", metavar='EXT', default=['png', 'jpg', 'bmp', 'ppm'], nargs='*', type=str,
                     help="images extensions to glob")

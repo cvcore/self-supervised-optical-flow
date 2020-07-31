@@ -2,6 +2,7 @@ import os
 import numpy as np
 import shutil
 import torch
+import time
 from imageio import imwrite
 
 def save_checkpoint(state, is_best, save_path, filename='checkpoint.pth.tar'):
@@ -50,8 +51,11 @@ def flow2rgb(flow_map, max_value=None):
 def save_image(image, file_name='default.png'):
     # convert from tensor to numpy array
     if torch.is_tensor(image):
+        if image.shape[0] < 3:
+            image = image[0].unsqueeze(0)
+            image = image.repeat(3,1,1)
         image = image.squeeze().cpu().detach().numpy()
-        
+
     # swap axes
     if image.shape[0] <= 3:
         image = np.moveaxis(image, 0, -1)
@@ -64,3 +68,4 @@ def save_image(image, file_name='default.png'):
         image[:,:,i] = image[:,:,i] / max_val
 
     imwrite(file_name, image)
+    time.sleep(0.01)

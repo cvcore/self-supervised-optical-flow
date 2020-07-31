@@ -75,7 +75,7 @@ parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',
                     help='don\'t append date timestamp to folder')
-parser.add_argument('--div-flow', default=20,
+parser.add_argument('--div-flow', default=1,
                     help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100, 200, 300], metavar='N', nargs='*',
                     help='epochs at which learning rate is divided by 2')
@@ -89,26 +89,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_default_config():
     cfg = {}
+    cfg["sec_sl_weight"] = 0.002
     cfg["sl_weight"] = 0.002
+    cfg["wsl_weight"] = 0.002
     cfg["pl_weight"] = 1
     cfg["fb_weight"] = 1
+    cfg["sec_sl_exp"] = 0.38
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25
     cfg["fb_exp"] = 0.45
-    cfg["weighted_sl_loss"] = True
     cfg["epochs"] = 1000
+    cfg["multiscale_sec_sl_loss"] = True
     cfg["multiscale_sl_loss"] = True
+    cfg["multiscale_wsl_loss"] = True
     cfg["multiscale_pl_loss"] = True
-    cfg["multiscale_census_loss"] = True
-    cfg["multiscale_ssim_loss"] = True
     cfg["multiscale_fb_loss"] = True
-    cfg["use_l1_loss"] = False
-    cfg["unflow"] = True
-    cfg["sl"] = True
-    cfg["census"] = True
-    cfg["ssim"] = False
-    cfg["fb"] = True
-
 
     return cfg
 
@@ -302,9 +297,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
                 break
 
         return losses.avg, flow2_EPEs.avg
-    elif args.unflow:
-        weights = [0.005, 0.01, 0.02, 0.08, 0.32]
-
+    else:
+        # use self-supervised loss
         for it, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -316,150 +310,48 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             input_bw = torch.cat((im2, im1), 1).to(device)
             pred_bw = model(input_bw)
 
-
-
-            census_loss = 0
-            census_loss_list = []
-            if config['census']:
-                #weights = [1, 0.34, 0.31, 0.27, 0.09]
-                #max_dist = [3, 2, 2, 1, 1]
-                for i in range(len(pred_fw)):
-                    flow_fw = pred_fw[i] * args.div_flow
-                    flow_bw = pred_bw[i] * args.div_flow
-                    loss = ternary_loss(im1, im2,  flow_fw, max_distance=1) +\
-                        ternary_loss(im2, im1, flow_bw,max_distance=1)
-                    census_loss += loss * weights[i]
-                    census_loss_list.append(loss.item())
-                    if not config['multiscale_census_loss']:
-                        break
-
-            sl_loss = 0
-            sl_loss_list = []
-            if config['sl']:
-                for i in range(len(pred_fw)):
-                    flow_fw = pred_fw[i] * args.div_flow
-                    flow_bw = pred_bw[i] * args.div_flow
-                    loss = smoothness_loss(flow_fw,config) + smoothness_loss(flow_bw,config)
-                    sl_loss += loss * weights[i]
-                    sl_loss_list.append(loss.item())
-                    if not config['multiscale_sl_loss']:
-                        break
-
-            ssim_loss = 0
-            ssim_loss_list = []
-            if config['ssim']:
-                for i in range(len(pred_bw)):
-                    flow_bw = pred_bw[i] * args.div_flow
-                    loss = ssim(im1,im2,flow_bw)
-                    ssim_loss += loss * weights[i]
-                    ssim_loss_list.append(loss.item())
-                    if not config['multiscale_ssim_loss']:
-                        break
-
             fb_loss = 0
-            fb_loss_list = []
-            if config['fb']:
-                for i in range(len(pred_bw)):
-                    flow_fw = pred_fw[i] * args.div_flow
-                    flow_bw = pred_bw[i] * args.div_flow
-                    loss = forward_backward_loss(im1=im1, im2=im2, flow_fw=flow_fw, flow_bw=flow_bw, config=config)
-                    fb_loss += loss * weights[i]
-                    fb_loss_list.append(loss.item())
-                    if not config['multiscale_fb_loss']:
-                        break
-
-            # to check the magnitude of both losses
-            if it % 500 == 0:
-                print("[DEBUG] census_loss:", str(census_loss_list))
-                print("[DEBUG] sl_loss:", str(sl_loss_list))
-                print("[DEBUG] ssim_loss:", str(ssim_loss_list))
-                print("[DEBUG] fb_loss:", str(fb_loss_list))
-
-            loss = census_loss + sl_loss + ssim_loss + fb_loss
-
-            # record loss and EPE
-            flow = pred_bw[0]
-            losses.update(loss.item(), target.size(0))
-            flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
-            train_writer.add_scalar('train_loss', loss.item(), n_iter)
-            train_writer.add_scalar('train_loss_census', census_loss.item(), n_iter)
-            train_writer.add_scalar('train_loss_sl', sl_loss.item(), n_iter)
-            #train_writer.add_scalar('train_loss_ssim', ssim_loss.item(), n_iter)
-            flow2_EPEs.update(flow2_EPE.item(), target.size(0))
-
-            # compute gradient and do optimization step
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if it % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Loss {5}\t EPE {6}'
-                      .format(epoch, it, epoch_size, batch_time,
-                              data_time, losses, flow2_EPEs))
-            n_iter += 1
-            if it >= epoch_size:
-                break
-
-        return losses.avg, flow2_EPEs.avg
-
-
-    else:
-        # use self-supervised loss
-        for it, (input, target) in enumerate(train_loader):
-            # measure data loading time
-            data_time.update(time.time() - end)
-            target = target.to(device)
-            im1 = input[0].to(device)
-            im2 = input[1].to(device)
-            input = torch.cat(input, 1).to(device)
-            pred = model(input)
-
             pl_loss = 0
-            pl_loss_list = []
-            for i in range(len(pred)):
-                flow = pred[i] * args.div_flow
-                loss = photometric_loss(im1, im2, flow, config)
-                pl_loss += loss
-                pl_loss_list.append(loss.item())
-
-                if not config['multiscale_pl_loss']:
-                    break
-
             sl_loss = 0
+            wsl_loss = 0
+            sec_sl_loss = 0
+
+            fb_loss_list = []
+            pl_loss_list = []
             sl_loss_list = []
-            if config['weighted_sl_loss']:
-                for i in range(len(pred)):
-                    flow = pred[i] * args.div_flow
-                    loss = weighted_smoothness_loss(im1, im2, flow, config)
-                    sl_loss += loss
-                    sl_loss_list.append(loss.item())
+            wsl_loss_list = []
+            sec_sl_loss_list = []
 
-                    if not config['multiscale_sl_loss']:
-                        break
+            for i in range(len(pred_fw)):
+                flow_fw = pred_fw[i] * args.div_flow
+                flow_bw = pred_bw[i] * args.div_flow
+                loss_dict = all_losses(im1, im2, flow_fw, flow_bw, config)
 
-            else:
-                # smoothness loss for multi resolution flow pyramid
-                for i in range(len(pred)):
-                    flow = pred[i] * args.div_flow
-                    loss = smoothness_loss(flow, config)
-                    sl_loss += loss
-                    sl_loss_list.append(loss.item())
+                fb_loss_list.append(loss_dict['fb_loss'])
+                pl_loss_list.append(loss_dict['pl_loss'])
+                sl_loss_list.append(loss_dict['sl_loss'])
+                wsl_loss_list.append(loss_dict['sec_sl_loss'])
+                sec_sl_loss_list.append(loss_dict['wsl_loss'])
 
-                    if not config['multiscale_sl_loss']:
-                        break
+                if i == 0 or config['multiscale_pl_loss']:
+                    fb_loss += loss_dict['fb_loss']
+                    pl_loss += loss_dict['pl_loss']
+                    sl_loss += loss_dict['sl_loss']
+                    sec_sl_loss += loss_dict['sec_sl_loss']
+                    wsl_loss += loss_dict['wsl_loss']
+
+            loss = fb_loss + pl_loss + sl_loss + wsl_loss + sec_sl_loss
+
             # to check the magnitude of both losses
-            if it % 500 == 0:
+            if it % 200 == 0:
+                print("[DEBUG] fb_loss:", str(fb_loss_list))
                 print("[DEBUG] pl_loss:", str(pl_loss_list))
                 print("[DEBUG] sl_loss:", str(sl_loss_list))
-
-            loss = pl_loss + sl_loss
+                print("[DEBUG] sec_sl_loss:", str(sec_sl_loss_list))
+                print("[DEBUG] wsl_sl_loss:", str(wsl_loss_list))
 
             # record loss and EPE
-            flow = pred[0]
+            flow = pred_fw[0]
             losses.update(loss.item(), target.size(0))
             flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)

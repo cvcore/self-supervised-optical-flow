@@ -12,6 +12,17 @@
             "console": "integratedTerminal",
             "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data/",
                      "--dataset", "flying_chairs"],
+        },
+        {
+            "name": "main.py (PWC)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/code/main.py",
+            "console": "integratedTerminal",
+            "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data/",
+                     "--dataset", "flying_chairs",
+                     "--arch", "pwcnet",
+                     "--device", "cuda:0"],
         }
     ]
 }

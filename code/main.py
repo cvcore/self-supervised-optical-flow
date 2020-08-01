@@ -79,15 +79,22 @@ parser.add_argument('--no-date', action='store_true',
 parser.add_argument('--div-flow', default=20, help='value by which flow will be divided. Original value is 20 but 1 with batchNorm gives good results')
 parser.add_argument('--milestones', default=[100,150,200], metavar='N', nargs='*', help='epochs at which learning rate is divided by 2')
 parser.add_argument('--self-supervised-loss', default=True, help='use self-supervised loss (photometric and smoothness)')
+parser.add_argument('--device', type=str, default=None)
+
+args = parser.parse_args()
 
 best_EPE = -1
 n_iter = 0
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+if args.device is None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+else:
+    device = torch.device(args.device)
 
 
 def get_default_config():
     cfg = {}
-    cfg["sl_weight"] = 0.03
+    cfg["sl_weight"] = 0.0
     cfg["pl_weight"] = 1
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25
@@ -101,8 +108,8 @@ def get_default_config():
 
 
 def main(config=get_default_config()):
-    global args, best_EPE
-    args = parser.parse_args()
+    global best_EPE
+
     wandb.init(project="fr-optical-flow", sync_tensorboard=True)
     wandb.config.update(args) # log configs passed in from progrom arguments
     wandb.config.update(config) # log also configs coming from BOHB interface
@@ -146,6 +153,14 @@ def main(config=get_default_config()):
             flow_transforms.RandomVerticalFlip(),
             flow_transforms.RandomHorizontalFlip()
         ])
+    elif args.arch == 'pwcnet':
+        co_transform = flow_transforms.Compose([
+            flow_transforms.RandomTranslate(10),
+            flow_transforms.RandomRotate(10,5),
+            flow_transforms.RandomCrop((320,448)),
+            flow_transforms.RandomVerticalFlip(),
+            flow_transforms.RandomHorizontalFlip()
+        ])
     else:
         co_transform = flow_transforms.Compose([
             flow_transforms.RandomTranslate(10),
@@ -182,14 +197,14 @@ def main(config=get_default_config()):
         network_data = None
         print("=> creating model '{}'".format(args.arch))
 
-    model = models.__dict__[args.arch](network_data).cuda()
-    model = torch.nn.DataParallel(model).cuda()
+    model = models.__dict__[args.arch](network_data).to(device)
+    # model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
 
     assert(args.solver in ['adam', 'sgd'])
     print('=> setting {} solver'.format(args.solver))
-    param_groups = [{'params': model.module.bias_parameters(), 'weight_decay': args.bias_decay},
-                    {'params': model.module.weight_parameters(), 'weight_decay': args.weight_decay}]
+    param_groups = [{'params': model.bias_parameters(), 'weight_decay': args.bias_decay},
+                    {'params': model.weight_parameters(), 'weight_decay': args.weight_decay}]
     if args.solver == 'adam':
         optimizer = torch.optim.Adam(param_groups, args.lr,
                                      betas=(args.momentum, args.beta))
@@ -226,7 +241,7 @@ def main(config=get_default_config()):
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
-            'state_dict': model.module.state_dict(),
+            'state_dict': model.state_dict(),
             'best_EPE': best_EPE,
             'div_flow': args.div_flow
         }, is_best, save_path)
@@ -235,7 +250,8 @@ def main(config=get_default_config()):
 
 
 def train(train_loader, model, optimizer, epoch, train_writer, config):
-    global n_iter, args
+    global n_iter
+
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -369,7 +385,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
         return losses.avg, flow2_EPEs.avg
 
 def validate(val_loader, model, epoch, output_writers):
-    global args
 
     batch_time = AverageMeter()
     flow2_EPEs = AverageMeter()

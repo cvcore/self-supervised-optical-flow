@@ -51,7 +51,7 @@ def save_image(image, file_name='default.png'):
     # convert from tensor to numpy array
     if torch.is_tensor(image):
         image = image.squeeze().cpu().detach().numpy()
-        
+
     # swap axes
     if image.shape[0] <= 3:
         image = np.moveaxis(image, 0, -1)

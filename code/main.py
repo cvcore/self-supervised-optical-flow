@@ -94,7 +94,7 @@ else:
 
 def get_default_config():
     cfg = {}
-    cfg["sl_weight"] = 0.03
+    cfg["sl_weight"] = 0.0
     cfg["pl_weight"] = 1
     cfg["sl_exp"] = 0.38
     cfg["pl_exp"] = 0.25

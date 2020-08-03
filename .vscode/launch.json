@@ -12,6 +12,27 @@
             "console": "integratedTerminal",
             "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data/",
                      "--dataset", "flying_chairs"],
+        },
+        {
+            "name": "main.py (PWC)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/code/main.py",
+            "console": "integratedTerminal",
+            "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data/",
+                     "--dataset", "flying_chairs",
+                     "--arch", "pwcnet",
+                     "--device", "cuda:0"],
+        },
+        {
+            "name": "run_inference.py (PWC)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/code/run_inference.py",
+            "console": "integratedTerminal",
+            "args": ["${workspaceFolder}/../../dataset/flying-chairs/FlyingChairs_release/data_test/",
+                     "${workspaceFolder}/flying_chairs/07-15-22:23/flownets,adam,,epochSize1000,b16,lr1e-05/model_best_6.308.tar",
+                     "--device", "cuda:0"],
         }
     ]
 }

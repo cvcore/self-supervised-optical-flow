@@ -13,6 +13,8 @@ from imageio import imread, imwrite
 import numpy as np
 from util import flow2rgb
 
+from datasets.listdataset import load_flo
+
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__"))
 
@@ -36,14 +38,19 @@ parser.add_argument('--max_flow', default=None, type=float,
 parser.add_argument('--upsampling', '-u', choices=['nearest', 'bilinear'], default=None, help='if not set, will output FlowNet raw input,'
                     'which is 4 times downsampled. If set, will output full resolution flow map, with selected upsampling')
 parser.add_argument('--bidirectional', action='store_true', help='if set, will output invert flow (from 1 to 0) along with regular flow')
+parser.add_argument('--device', type=str, default=None)
 
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+args = parser.parse_args()
+
+if args.device is not None:
+    device = torch.device(args.device)
+else:
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 @torch.no_grad()
 def main():
-    global args, save_path
-    args = parser.parse_args()
+    global save_path
 
     if args.output_value == 'both':
         output_string = "raw output and RGB visualization"
@@ -72,8 +79,9 @@ def main():
         test_files = data_dir.files('*1.{}'.format(ext))
         for file in test_files:
             img_pair = file.parent / (file.namebase[:-1] + '2.{}'.format(ext))
+            img_gt = file.parent / (file.namebase[:-4] + 'flow.flo')
             if img_pair.isfile():
-                img_pairs.append([file, img_pair])
+                img_pairs.append([file, img_pair, img_gt])
 
     print('{} samples found'.format(len(img_pairs)))
     # create model
@@ -86,10 +94,11 @@ def main():
     if 'div_flow' in network_data.keys():
         args.div_flow = network_data['div_flow']
 
-    for (img1_file, img2_file) in tqdm(img_pairs):
+    for (img1_file, img2_file, gt_file) in tqdm(img_pairs):
 
         img1 = input_transform(imread(img1_file))
         img2 = input_transform(imread(img2_file))
+        gt = load_flo(gt_file)
         input_var = torch.cat([img1, img2]).unsqueeze(0)
 
         if args.bidirectional:
@@ -112,6 +121,9 @@ def main():
                 # Make the flow map a HxWx2 array as in .flo files
                 to_save = (args.div_flow*flow_output).cpu().numpy().transpose(1,2,0)
                 np.save(filename + '.npy', to_save)
+            gt_flow = flow2rgb(gt.transpose(2,0,1), max_value=args.max_flow)
+            gt_save = (gt_flow * 255).astype(np.uint8).transpose(1,2,0)
+            imwrite(filename + '_gt.png', gt_save)
 
 
 if __name__ == '__main__':

@@ -9,9 +9,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def image_warp(image, flow, with_mask=False):
     if image.shape[2] != flow.shape[2]:
-        scale_factor = image.shape[2]/flow.shape[2]
         flow = F.interpolate(input=flow, scale_factor=image.shape[2]/flow.shape[2], mode='bilinear')
-        flow *= scale_factor
 
     B, C, H, W = image.size()
 
@@ -42,7 +40,6 @@ def image_warp(image, flow, with_mask=False):
     else:
         return output
 
-
 def length_sq(mat):
     return torch.sum(torch.pow(mat, 2), dim=1)
 
@@ -61,8 +58,8 @@ def all_losses(im1, im2, flow_fw, flow_bw, config, weight):
     scale_factor_bw = im2.shape[2] / flow_bw.shape[2]
     flow_fw = F.interpolate(input=flow_fw, scale_factor=scale_factor_fw, mode='bilinear')
     flow_bw = F.interpolate(input=flow_bw, scale_factor=scale_factor_bw, mode='bilinear')
-    flow_fw = flow_fw * scale_factor_fw
-    flow_bw = flow_bw * scale_factor_bw
+    #flow_fw = flow_fw * scale_factor_fw
+    #flow_bw = flow_bw * scale_factor_bw
 
     im2_warped, mask_fw = image_warp(im2, flow_fw, with_mask=True)
     im1_warped, mask_bw = image_warp(im1, flow_bw, with_mask=True)
@@ -160,83 +157,6 @@ def all_losses(im1, im2, flow_fw, flow_bw, config, weight):
                  'sec_sl_loss': sec_sl_loss * weight,
                  'wsl_loss': wsl_loss * weight}
     return loss_dict
-
-
-def forward_backward_loss(im1, im2, flow_fw, flow_bw, config):
-    fb_weight = config['fb_weight']
-    fb_exp = config['fb_exp']
-
-    flow_fw = F.interpolate(input=flow_fw, scale_factor=im1.shape[2]/flow_fw.shape[2], mode='bilinear')
-    flow_bw = F.interpolate(input=flow_bw, scale_factor=im2.shape[2]/flow_bw.shape[2], mode='bilinear')
-
-    im2_warped, mask_fw = image_warp(im2, flow_fw, with_mask=True)
-    im1_warped, mask_bw = image_warp(im1, flow_bw, with_mask=True)
-
-    flow_bw_warped = image_warp(flow_bw, flow_fw)
-    flow_fw_warped = image_warp(flow_fw, flow_bw)
-    flow_diff_fw = flow_fw + flow_bw_warped
-    flow_diff_bw = flow_bw + flow_fw_warped
-    mag_sq_fw = length_sq(flow_fw) + length_sq(flow_bw_warped)
-    mag_sq_bw = length_sq(flow_bw) + length_sq(flow_fw_warped)
-    occ_thresh_fw =  0.01 * mag_sq_fw + 0.5
-    occ_thresh_bw =  0.01 * mag_sq_bw + 0.5
-
-    fb_occ_fw = (length_sq(flow_diff_fw) > occ_thresh_fw).float()
-    fb_occ_bw = (length_sq(flow_diff_bw) > occ_thresh_bw).float()
-    mask_fw *= (1 - fb_occ_fw)
-    mask_bw *= (1 - fb_occ_bw)
-
-    return fb_weight * charbonnier_loss_unflow(flow_diff_fw, mask=mask_fw, alpha=fb_exp) + \
-           fb_weight * charbonnier_loss_unflow(flow_diff_bw, mask=mask_bw, alpha=fb_exp)
-
-def photometric_loss(im1, im2, flow, config):
-    """ calculating photometric loss by warping im2 with flow (or im1 with flow for negative case)
-    """
-    pl_weight = config['pl_weight']
-    pl_exp = config['pl_exp']
-
-    warped_image = image_warp(im2, flow)
-
-    # apply charbonnier loss
-    return pl_weight * charbonnier_loss(warped_image - im1, pl_exp)
-
-
-def smoothness_loss(flow, config):
-    sl_weight = config['sl_weight']
-    sl_exp = config['sl_exp']
-
-    diff_y = flow[:, :, 1:, :] - flow[:, :, :-1, :]
-    diff_x = flow[:, :, :, 1:] - flow[:, :, :, :-1]
-
-    # magic numbers from https://github.com/ryersonvisionlab/unsupFlownet
-    return sl_weight * charbonnier_loss_unflow(diff_y) + \
-           sl_weight * charbonnier_loss_unflow(diff_x)
-
-
-def weighted_smoothness_loss(im1, im2, flow, config):
-    # calculates |grad U_x| * exp(-|grad I_x|) +
-    #            |grad U_y| * exp(-|grad I_y|) +
-    #            |grad V_x| * exp(-|grad I_x|) +
-    #            |grad V_y| * exp(-|grad I_y|)
-
-    sl_weight = config['sl_weight']
-    image = im1
-
-    # todo: no idea if downsampling or upsampling is better...
-    if image.shape[2] != flow.shape[2]:
-        image = F.interpolate(input=image, scale_factor=flow.shape[2]/im1.shape[2], mode='bilinear').to(device)
-
-    diff_flow_y = abs(flow[:, :, 1:, :] - flow[:, :, :-1, :])
-    diff_flow_x = abs(flow[:, :, :, 1:] - flow[:, :, :, :-1])
-
-    diff_img_y = abs(image[:, :, 1:, :] - image[:, :, :-1, :])
-    diff_img_x = abs(image[:, :, :, 1:] - image[:, :, :, :-1])
-
-    exp_y = torch.exp(-torch.mean(diff_img_y, dim=1, keepdim=True)).expand(-1,2,-1,-1)
-    exp_x = torch.exp(-torch.mean(diff_img_x, dim=1, keepdim=True)).expand(-1,2,-1,-1)
-
-    return sl_weight*torch.mean((diff_flow_y * exp_y)) + \
-           sl_weight*torch.mean((diff_flow_x * exp_x))
 
 
 def charbonnier_loss_unflow(x, mask=None, truncate=None, alpha=0.45, beta=1.0, epsilon=0.001):

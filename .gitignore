@@ -9,3 +9,5 @@ dataset/kitti_stereo_flow
 *.zip
 .idea/
 wandb/
+eval/
+.vscode

@@ -46,7 +46,7 @@ def image_warp(image, flow, with_mask=False):
 def length_sq(mat):
     return torch.sum(torch.pow(mat, 2), dim=1)
 
-def all_losses(im1, im2, flow_fw, flow_bw, config):
+def all_losses(im1, im2, flow_fw, flow_bw, config, weight):
     sec_sl_weight = config['sec_sl_weight']
     sl_weight = config['sl_weight']
     wsl_weight = config['wsl_weight']
@@ -154,11 +154,11 @@ def all_losses(im1, im2, flow_fw, flow_bw, config):
                wsl_weight * torch.mean(abs(diff_flow_bw_y) * exp_im2_y) + \
                wsl_weight * torch.mean(abs(diff_flow_bw_x) * exp_im2_x)
 
-    loss_dict = {'fb_loss': fb_loss,
-                 'pl_loss': pl_loss,
-                 'sl_loss': sl_loss,
-                 'sec_sl_loss': sec_sl_loss,
-                 'wsl_loss': wsl_loss,}
+    loss_dict = {'fb_loss': fb_loss * weight,
+                 'pl_loss': pl_loss * weight,
+                 'sl_loss': sl_loss * weight,
+                 'sec_sl_loss': sec_sl_loss * weight,
+                 'wsl_loss': wsl_loss * weight}
     return loss_dict
 
 

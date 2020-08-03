@@ -89,9 +89,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_default_config():
     cfg = {}
-    cfg["sec_sl_weight"] = 0.002
-    cfg["sl_weight"] = 0.002
-    cfg["wsl_weight"] = 0.002
+    cfg["sec_sl_weight"] = 1
+    cfg["sl_weight"] = 1
+    cfg["wsl_weight"] = 1
     cfg["pl_weight"] = 1
     cfg["fb_weight"] = 1
     cfg["sec_sl_exp"] = 0.38
@@ -299,6 +299,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
         return losses.avg, flow2_EPEs.avg
     else:
         # use self-supervised loss
+        #weights = [0.005, 0.01, 0.02, 0.08, 0.32]
+        weights = [1,1,1,1,1]
         for it, (input, target) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -325,13 +327,13 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             for i in range(len(pred_fw)):
                 flow_fw = pred_fw[i] * args.div_flow
                 flow_bw = pred_bw[i] * args.div_flow
-                loss_dict = all_losses(im1, im2, flow_fw, flow_bw, config)
+                loss_dict = all_losses(im1, im2, flow_fw, flow_bw, config, weights[i])
 
-                fb_loss_list.append(loss_dict['fb_loss'])
-                pl_loss_list.append(loss_dict['pl_loss'])
-                sl_loss_list.append(loss_dict['sl_loss'])
-                wsl_loss_list.append(loss_dict['sec_sl_loss'])
-                sec_sl_loss_list.append(loss_dict['wsl_loss'])
+                fb_loss_list.append(loss_dict['fb_loss'].cpu().detach().numpy().item())
+                pl_loss_list.append(loss_dict['pl_loss'].cpu().detach().numpy().item())
+                sl_loss_list.append(loss_dict['sl_loss'].cpu().detach().numpy().item())
+                wsl_loss_list.append(loss_dict['sec_sl_loss'].cpu().detach().numpy().item())
+                sec_sl_loss_list.append(loss_dict['wsl_loss'].cpu().detach().numpy().item())
 
                 if i == 0 or config['multiscale_pl_loss']:
                     fb_loss += loss_dict['fb_loss']
@@ -355,8 +357,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, config):
             losses.update(loss.item(), target.size(0))
             flow2_EPE = args.div_flow * realEPE(flow, target, sparse=args.sparse)
             train_writer.add_scalar('train_loss', loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_fb', fb_loss.item(), n_iter)
             train_writer.add_scalar('train_loss_pl', pl_loss.item(), n_iter)
             train_writer.add_scalar('train_loss_sl', sl_loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_sec_sl', sec_sl_loss.item(), n_iter)
+            train_writer.add_scalar('train_loss_wsl', wsl_loss.item(), n_iter)
             flow2_EPEs.update(flow2_EPE.item(), target.size(0))
 
             # compute gradient and do optimization step

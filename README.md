@@ -6,9 +6,6 @@ In this research project, we compare and analyze a set of self-supervised losses
 
 The network is able to achieve a validation endpoint error (EPE) of 5.5 on the FlyingChairs dataset, trained with only photometric and smoothness loss. Pretrained weights can be downloaded for evaluation.
 
-![input_sample](code/images/input_2.gif)
-
-![flow_sample](code/images/GT_2.png)
 
 ## Setup
 

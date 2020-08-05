@@ -44,11 +44,12 @@ Change `get_default_config()` function in `code/main.py` to set weights for each
 
 Pretrained models
 
-| Best Models                            | Evaluation EPE | Download Link                                                                                |
-| -------------------------------------- | -------------- | -------------------------------------------------------------------------------------------- |
-| Supervised FlowNetS                    | 2.391          | [Dropbox](https://www.dropbox.com/s/6dt6noqms64wkxp/supervised_flownets_chairs.pth.tar?dl=0) |
-| Self-supervised Phometric + Smoothness | 5.505          | [Dropbox](https://www.dropbox.com/s/w3vvsi8oyx2mt4f/pl_sl_chairs.pth.tar?dl=0)               |
-| SSIM + Smoothness                      | 5.59           | [Dropbox]()                                                                                  |
+| Best Models                               | Evaluation EPE | Download Link                                                                                |
+| ----------------------------------------- | -------------- | -------------------------------------------------------------------------------------------- |
+| Supervised FlowNetS                       | 2.391          | [Dropbox](https://www.dropbox.com/s/6dt6noqms64wkxp/supervised_flownets_chairs.pth.tar?dl=0) |
+| Self-supervised Phometric + Smoothness    | 5.505          | [Dropbox](https://www.dropbox.com/s/w3vvsi8oyx2mt4f/pl_sl_chairs.pth.tar?dl=0)               |
+| SSIM + Smoothness                         | 5.59           | [Dropbox]()                                                                                  |
+| SSIM + Smoothness + Fwd & bwd Consistency | 5.48           | [Dropbox](https://drive.google.com/uc?id=1SSt5bt6CmrXNjSIEPTjfDKhJmk9-dIxP&export=download)  |
 
 For evaluation you can download our pretrained model and run
 

@@ -37,7 +37,7 @@ parser.add_argument('--max_flow', default=None, type=float,
                     help='max flow value. Flow map color is saturated above this value. If not set, will use flow map\'s max value')
 parser.add_argument('--upsampling', '-u', choices=['nearest', 'bilinear'], default=None, help='if not set, will output FlowNet raw input,'
                     'which is 4 times downsampled. If set, will output full resolution flow map, with selected upsampling')
-parser.add_argument('--bidirectional', action='store_true', help='if set, will output invert flow (from 1 to 0) along with regular flow')
+parser.add_argument('--bidirectional', type=str, default=False)
 parser.add_argument('--device', type=str, default=None)
 
 args = parser.parse_args()
@@ -103,8 +103,8 @@ def main():
 
         if args.bidirectional:
             # feed inverted pair along with normal pair
-            inverted_input_var = torch.cat([img2, img1]).unsqueeze(0)
-            input_var = torch.cat([input_var, inverted_input_var])
+            input_var = torch.cat([img2, img1]).unsqueeze(0)
+
 
         input_var = input_var.to(device)
         # compute output

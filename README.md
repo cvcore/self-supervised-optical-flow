@@ -6,6 +6,9 @@ In this research project, we compare and analyze a set of self-supervised losses
 
 The network is able to achieve a validation endpoint error (EPE) of 5.5 on the FlyingChairs dataset, trained with only photometric and smoothness loss. Pretrained weights can be downloaded for evaluation.
 
+## Results
+
+![Evaluation Results](code/images/eval_results.png)
 
 ## Setup
 
@@ -55,3 +58,20 @@ For evaluation you can download our pretrained model and run
     python code/run_inference.py PATH_DATASET PATH_MODEL_PTH --output PATH_OUTPUT
 
 Then, the model prediction together with the groundtruth label will be saved in `PATH_OUTPUT` folder.
+
+Please note: for the SSIM model, you need an extra argument `--bidirectional True` for evaluation.
+
+## Reference
+
+If you find this implementation useful in your work, please acknowledge it appropriately:
+
+```
+@misc{fr-panoptic-forecast,
+  author = {Chengxin Wang and Thomas Nierhoff and Abdelrahman Younes},
+  title = {fr-optical-flow: Self-supervised Learning of Optical Flow},
+  year = {2020},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/cvcore/fr-optical-flow}
+}
+```

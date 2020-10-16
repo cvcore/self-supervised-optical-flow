@@ -66,12 +66,12 @@ Please note: for the SSIM model, you need an extra argument `--bidirectional Tru
 If you find this implementation useful in your work, please acknowledge it appropriately:
 
 ```
-@misc{fr-panoptic-forecast,
+@misc{self-supervised-optical-flow,
   author = {Chengxin Wang and Thomas Nierhoff and Abdelrahman Younes},
-  title = {fr-optical-flow: Self-supervised Learning of Optical Flow},
+  title = {self-supervised-optical-flow: Self-supervised Learning of Optical Flow},
   year = {2020},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{https://github.com/cvcore/fr-optical-flow}
+  howpublished = {\url{https://github.com/cvcore/self-supervised-optical-flow}
 }
 ```
